@@ -1,0 +1,30 @@
+{
+  "name": "amber",
+  "version": "0.2.0",
+  "description": "Turn a URL into a self-contained, de-junked offline folder, the way Alex Chan does it by hand — but driven by Claude.",
+  "type": "module",
+  "bin": {
+    "amber": "src/cli.ts"
+  },
+  "scripts": {
+    "archive": "tsx src/cli.ts",
+    "agent": "tsx agent/agent.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "evals": "vitest run --config vitest.evals.config.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.2",
+    "cheerio": "^1.0.0",
+    "playwright": "^1.49.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "domhandler": "^6.0.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.9",
+    "vitest-evals": "^0.12.0"
+  }
+}
