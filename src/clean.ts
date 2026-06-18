@@ -36,6 +36,30 @@ export async function applyPlan(
     }
   }
 
+  // 2b. Always strip what a static offline snapshot must never keep, regardless
+  //     of the plan:
+  //       - <script> — they execute and phone home (Twitter widgets, analytics)
+  //       - <noscript> fallbacks
+  //       - connection hints (<link rel="preconnect"/"dns-prefetch">) — open sockets
+  //       - JS-loading hints that fetch modules/scripts over the network:
+  //         rel="modulepreload" (SPA bundles, e.g. Shopify/Vite), rel="prefetch",
+  //         rel="prerender", and rel="preload" as="script". Since scripts are
+  //         stripped, these only ever pull dead bytes from the live host.
+  const alwaysStrip = $(
+    [
+      "script",
+      "noscript",
+      "link[rel~='preconnect']",
+      "link[rel~='dns-prefetch']",
+      "link[rel~='modulepreload']",
+      "link[rel~='prefetch']",
+      "link[rel~='prerender']",
+      "link[rel~='preload'][as='script']",
+    ].join(", "),
+  );
+  report.removed += alwaysStrip.length;
+  alwaysStrip.remove();
+
   // 3. Strip leftovers that survive selector removal: inline on* handlers and
   //    dead javascript: hrefs (useless offline anyway).
   $("*").each((_, el) => {

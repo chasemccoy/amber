@@ -38,12 +38,15 @@ Two entry points share the same capture/clean code:
   1. **Capture** — `src/render.ts` (Playwright) + `src/capture.ts`. Backend is
      `auto` by default: static `fetch` first, escalating to a headless-Chromium
      render only when the page looks client-rendered (`assessRendering`).
-     `captureAssets()` walks the DOM, downloads every referenced asset, and
-     rewrites refs to **relative local paths**. `<a href>` links are left alone.
+     `captureAssets()` walks the DOM, downloads every referenced asset (incl.
+     `url()` in `<style>` blocks and `.css` files), and rewrites refs to
+     **relative local paths**. `<a href>` links and `<iframe src>` are left alone;
+     `<script src>` is not localised (scripts are stripped in clean).
   2. **Plan** — `src/planner.ts`. `llmPlan()` uses `messages.parse` + a Zod
      schema; `heuristicPlan()` is the no-key fallback.
-  3. **Clean** — `src/clean.ts` `applyPlan()`. Swaps media first, then removes
-     junk by selector, strips `on*` handlers and `javascript:` hrefs.
+  3. **Clean** — `src/clean.ts` `applyPlan()`. Swaps media first, removes junk by
+     selector, then *unconditionally* strips `<script>`/`<noscript>`/preconnect &
+     dns-prefetch hints, `on*` handlers, and `javascript:` hrefs.
   4. **Package** — writes `index.html`, `plan.json`, `manifest.json`.
 - **Agent** (`pnpm agent`) — `agent/agent.ts` `runAgentLoop()`, a
   `beta.messages.toolRunner` loop with 7 tools (get_dom_outline, inspect,

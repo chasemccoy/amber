@@ -88,9 +88,11 @@ archives/example.com-some-post/
 1. **Capture** (`src/render.ts` + `src/capture.ts`) — render the page in headless
    Chromium so JS, lazy-loaded images, and client-rendered content are present;
    snapshot the asset bytes the browser already downloaded (no second fetch), then
-   walk the DOM and rewrite every reference (`<link>`, `<script>`, `<img src/srcset>`,
-   `<source>`, `<video>/<audio>`, inline `style` `url()`, and `url(...)` inside CSS —
-   recursively, so web-fonts and background images come too) to a local path. Honours
+   walk the DOM and rewrite every reference (`<link>`, `<img src/srcset>`,
+   `<source>`, `<video>/<audio>`, inline `style` `url()`, `url(...)` inside `<style>`
+   blocks, and `url(...)` inside CSS files — recursively, so web-fonts and background
+   images come too) to a local path. `<script src>` is *not* localised; scripts are
+   stripped in the clean step. Honours
    `<base href>`. `<a href>` links are left alone — you localise what a page *loads*,
    not where it *links*. By default the backend is **auto**: a static HTTP fetch
    first, escalating to the Chromium render only when the fetched page looks
@@ -103,7 +105,10 @@ archives/example.com-some-post/
    for cookie/ad/newsletter; tags from `<meta keywords>` when present) runs with
    `--no-llm` or if the API call fails.
 3. **Clean** (`src/clean.ts`) — download & swap embedded media first (so a broad
-   `iframe` selector can't nuke a video), delete junk by selector, strip inline `on*`
+   `iframe` selector can't nuke a video), delete junk by selector, then
+   *unconditionally* strip what a static offline copy must never keep regardless of
+   the plan: `<script>` (it runs and phones home), `<noscript>`, and connection
+   hints (`<link rel="preconnect"/"dns-prefetch">`). Finally strip inline `on*`
    handlers and dead `javascript:` links, and drop comments. The saved HTML stays
    faithful to the original — provenance is recorded in `manifest.json`, not injected.
 4. **Package** (`src/pipeline.ts`) — write `index.html`, `plan.json`, `manifest.json`.

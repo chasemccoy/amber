@@ -166,6 +166,61 @@ test("captureAssets localises a stylesheet and strips crossorigin/integrity so i
   assert.ok(!/integrity/i.test(out)); // SRI stripped
 });
 
+test("captureAssets rewrites url() inside <style> elements to local paths", async () => {
+  // A <style> block (e.g. MathJax @font-face) isn't a style attribute or a .css
+  // file, so its url()s used to be left pointing at the network. No network here
+  // — the font is served from the prefetched map.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "amber-cap-style-"));
+  const url = "https://ex.test/page";
+  const fontUrl = "https://ex.test/fonts/math.woff";
+  const cap = new Capturer(tmp, { timeoutMs: 1000, insecureTLS: false });
+  cap.loadRender({
+    html: `<html><head><style>@font-face{font-family:M;src:url(${fontUrl})}</style></head><body>hi</body></html>`,
+    finalUrl: url,
+    baseUrl: url,
+    resources: new Map([[fontUrl, { contentType: "font/woff", body: Buffer.from("FONT") }]]),
+  });
+  await cap.captureAssets();
+  const out = cap.$.html();
+  assert.ok(!out.includes(fontUrl)); // external font url() localised
+  assert.match(out, /url\(assets\/static\//); // now points at the local copy
+});
+
+test("applyPlan always strips scripts, noscript, and JS/connection hints, even when not in the plan", async () => {
+  const $ = cheerio.load(`<html><head>
+    <link rel="preconnect" href="https://fonts.gstatic.com">
+    <link rel="dns-prefetch" href="https://cdn.example.com">
+    <link rel="modulepreload" href="https://cdn.example.com/app-abc.js">
+    <link rel="prefetch" href="https://cdn.example.com/next-page.js">
+    <link rel="preload" as="script" href="https://cdn.example.com/boot.js">
+    <link rel="preload" as="font" href="assets/static/body.woff2">
+    <link rel="stylesheet" href="assets/static/site.css"></head><body>
+    <article id="main">keep me</article>
+    <script src="assets/static/widgets.js"></script>
+    <noscript>please enable javascript</noscript></body></html>`);
+  const plan: CleanupPlan = {
+    title: "t",
+    mainContentSelector: "#main",
+    removeSelectors: [], // deliberately empty — stripping must be unconditional
+    media: [],
+    tags: [],
+    notes: "",
+    source: "test",
+  };
+  const report = await applyPlan($, plan, "/tmp/_archiver_test_strip");
+  const out = $.html();
+  assert.ok(!/<script/i.test(out)); // scripts gone (they run and phone home)
+  assert.ok(!/<noscript/i.test(out));
+  assert.ok(!/preconnect|dns-prefetch/i.test(out)); // connection hints gone
+  assert.ok(!/modulepreload|prefetch/i.test(out)); // JS-loading hints gone
+  assert.ok(!out.includes("boot.js")); // preload as=script gone
+  assert.ok(!out.includes(".js")); // no .js reference survives anywhere
+  assert.match(out, /assets\/static\/body\.woff2/); // legit font preload kept
+  assert.match(out, /assets\/static\/site\.css/); // real stylesheet kept
+  assert.ok(out.includes("keep me")); // main content kept
+  assert.ok(report.removed >= 6); // script + noscript + 2 conn hints + 2 JS hints
+});
+
 test("CSS_URL_RE matches url() and skips data: URIs", () => {
   const css = "a{background:url( 'f.woff' )}b{src:url(data:x)}c{background:url(/img.png)}";
   const urls = [...css.matchAll(CSS_URL_RE)].map((m) => m[2]);

@@ -222,11 +222,15 @@ export class Capturer {
     const linkRels = new Set(["stylesheet", "icon", "shortcut", "apple-touch-icon", "mask-icon", "preload"]);
     for (const el of $("link[href]").toArray()) {
       const rels = ($(el).attr("rel") ?? "").toLowerCase().split(/\s+/);
+      // Script-type preloads are stripped in clean — don't download the JS.
+      if (rels.includes("preload") && ($(el).attr("as") ?? "").toLowerCase() === "script") continue;
       if (rels.some((r) => linkRels.has(r))) await localise(el, "href");
     }
     // Responsive image preloads carry their URLs in `imagesrcset`, not `href`.
     for (const el of $("link[imagesrcset]").toArray()) await this.localiseSrcset(el, htmlRel, "imagesrcset");
-    for (const el of $("script[src]").toArray()) await localise(el, "src");
+    // <script src> is intentionally not localised — scripts are stripped in the
+    // clean step (a static offline snapshot never runs them), so downloading
+    // them would just orphan bytes in assets/.
     for (const el of $("img").toArray()) {
       await localise(el, "src");
       await this.localiseSrcset(el, htmlRel);
@@ -239,6 +243,12 @@ export class Capturer {
     for (const el of $("[style]").toArray()) {
       const style = $(el).attr("style")!;
       $(el).attr("style", await this.rewriteInlineStyle(style, htmlRel));
+    }
+    // `url(...)` inside <style> elements — same as inline style attrs and .css
+    // files, but these live in the document. Common with MathJax/KaTeX @font-face.
+    for (const el of $("style").toArray()) {
+      const css = $(el).html();
+      if (css) $(el).html(await this.rewriteInlineStyle(css, htmlRel));
     }
   }
 
