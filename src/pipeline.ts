@@ -38,7 +38,8 @@ export function slugifyUrl(url: string): string {
   let base: string;
   try {
     const u = new URL(url);
-    base = `${u.host}${u.pathname}`.replace(/\/+$/, "") || u.host;
+    const host = u.host.replace(/^www\./, "");
+    base = `${host}${u.pathname}`.replace(/\/+$/, "") || host;
   } catch {
     base = url;
   }
