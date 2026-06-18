@@ -11,5 +11,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src", "agent", "test"]
+  "include": ["src", "agent", "test", "extension/host"]
 }

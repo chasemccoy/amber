@@ -33,6 +33,7 @@ interface Ctx {
   media: Array<{ sourceUrl: string; ok: boolean; localPath: string | null }>;
   mainSelector: string | null;
   title: string;
+  tags: string[];
   finalized: boolean;
 }
 let CTX: Ctx;
@@ -130,12 +131,18 @@ const tools = [
   }),
   betaZodTool({
     name: "set_main_content",
-    description: "Record the main-content selector and page title for the manifest.",
-    inputSchema: z.object({ selector: z.string(), title: z.string() }),
-    run: async ({ selector, title }) => {
+    description:
+      "Record the main-content selector, page title, and 3-7 lowercase topical tags (the page's actual subject matter, not generic words) for the manifest.",
+    inputSchema: z.object({
+      selector: z.string(),
+      title: z.string(),
+      tags: z.array(z.string()).default([]),
+    }),
+    run: async ({ selector, title, tags }) => {
       CTX.mainSelector = selector;
       CTX.title = title;
-      return `noted main content ${selector}, title ${JSON.stringify(title)}`;
+      CTX.tags = tags.map((t) => t.trim().toLowerCase()).filter(Boolean);
+      return `noted main content ${selector}, title ${JSON.stringify(title)}, tags [${CTX.tags.join(", ")}]`;
     },
   }),
   betaZodTool({
@@ -150,6 +157,7 @@ const tools = [
           {
             sourceUrl: CTX.url,
             title: CTX.title,
+            tags: CTX.tags,
             mainContentSelector: CTX.mainSelector,
             elementsRemoved: CTX.removed,
             media: CTX.media,
@@ -171,13 +179,21 @@ The page has already been fetched and its assets (CSS, images, fonts) downloaded
 and rewritten to local paths — you do NOT handle assets. Your job is the judgement:
 
 1. Call get_dom_outline to understand the page. inspect anything ambiguous.
-2. Identify and remove() junk: ads, cookie/consent banners, newsletter/subscribe \
-popups, social-share bars, tracking/analytics <script> tags, "related/recommended" \
-promo modules, time-sensitive notification bars, JS-only widgets that are dead \
-offline. Be thorough but never remove the main content.
+2. Identify and remove() genuine junk: ads, cookie/consent banners, \
+newsletter/subscribe popups, social-share bars, comment widgets, \
+tracking/analytics <script> tags, third-party "around the web"/sponsored \
+recommendation widgets, login/signup or paywall modals, time-sensitive \
+notification bars, and JS-only widgets that are dead offline. KEEP the page's own \
+structure and first-party navigation — do not remove the site header, primary \
+nav, or footer wholesale, nor bylines, dates, captions, copyright, or the site's \
+own next/previous-article teasers (with their thumbnails); if such a region holds \
+a junk widget, remove just that child. Never remove the main content. Err on the \
+side of keeping: when in doubt, keep it.
 3. list_embeds, and for any real media (a YouTube/Vimeo video of a talk, an audio \
 player), call download_and_swap with the canonical source URL.
-4. set_main_content with the main selector and title.
+4. set_main_content with the main selector, title, and 3-7 lowercase topical \
+tags describing the page's actual subject matter (technologies, fields, people, \
+events, concepts) — not generic words like "article" or the site name.
 5. finalize.
 
 Work in that order. Prefer specific selectors (ids, then tag.class).`;
@@ -198,10 +214,10 @@ export async function runAgentLoop(
   url: string,
   opts: { outDir: string; model?: string; onLog?: (m: string) => void },
 ): Promise<AgentLoopResult> {
-  CTX = { url, outDir: opts.outDir, $, removed: 0, media: [], mainSelector: null, title: "", finalized: false };
+  CTX = { url, outDir: opts.outDir, $, removed: 0, media: [], mainSelector: null, title: "", tags: [], finalized: false };
   const client = new Anthropic();
   const runner = client.beta.messages.toolRunner({
-    model: opts.model ?? "claude-opus-4-8",
+    model: opts.model ?? "claude-sonnet-4-6",
     max_tokens: 8000,
     thinking: { type: "adaptive" },
     system: SYSTEM,
@@ -223,7 +239,7 @@ export async function runAgentLoop(
   return { toolCalls, ctx: CTX };
 }
 
-export async function runAgent(url: string, outRoot = "archives", model = "claude-opus-4-8"): Promise<string> {
+export async function runAgent(url: string, outRoot = "archives", model = "claude-sonnet-4-6"): Promise<string> {
   const outDir = path.join(outRoot, slugifyUrl(url));
   fs.mkdirSync(outDir, { recursive: true });
 

@@ -43,6 +43,27 @@ export const JunkRemovalJudge = createJudge("JunkRemoval", ({ output, metadata }
   };
 });
 
+/**
+ * Fraction of structural-chrome markers (site header, nav, footer, copyright,
+ * and first-party next/previous-article navigation) that survive the plan's
+ * removals. Guards against overreach — deleting the page's own furniture and
+ * editorial navigation, not just the junk inside it.
+ */
+export const StructurePreservedJudge = createJudge("StructurePreserved", ({ output, metadata }: Ctx) => {
+  const { chromeKept } = metadata.expected;
+  if (!chromeKept || chromeKept.length === 0) return { score: 1, metadata: { rationale: "no chrome to check" } };
+  const cleanedText = applyRemovals(metadata.html, output.removeSelectors);
+  const removed = chromeKept.filter((marker) => !cleanedText.includes(marker));
+  const score = (chromeKept.length - removed.length) / chromeKept.length;
+  return {
+    score,
+    metadata: {
+      rationale: `${chromeKept.length - removed.length}/${chromeKept.length} chrome markers preserved`,
+      ...(removed.length ? { overreached: removed } : {}),
+    },
+  };
+});
+
 /** 1 if the main content survives the plan's removals, 0 if it was nuked. */
 export const MainContentPreservedJudge = createJudge("MainContentPreserved", ({ output, metadata }: Ctx) => {
   const cleanedText = applyRemovals(metadata.html, output.removeSelectors);
@@ -50,6 +71,41 @@ export const MainContentPreservedJudge = createJudge("MainContentPreserved", ({ 
   return {
     score: kept ? 1 : 0,
     metadata: { rationale: kept ? "main content preserved" : "main content was removed — overreach" },
+  };
+});
+
+/** Normalise a tag/synonym to alphanumeric words for fuzzy comparison. */
+function normTag(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * Fraction of expected topic concepts covered by the plan's tags. Each concept
+ * is a synonym group; it's covered if any synonym fuzzy-matches any tag (one
+ * normalised string contains the other), so "llm" satisfies a {large language
+ * model, llm} concept and "static-site generator" satisfies {static site}.
+ * Scores topical recall without demanding exact strings.
+ */
+export const TagRelevanceJudge = createJudge("TagRelevance", ({ output, metadata }: Ctx) => {
+  const topics = metadata.expected.expectedTopics;
+  if (!topics || topics.length === 0) return { score: 1, metadata: { rationale: "no topics expected" } };
+  const tags = (output.tags ?? []).map(normTag).filter(Boolean);
+  const covers = (syn: string) => {
+    const s = normTag(syn);
+    return tags.some((t) => t === s || t.includes(s) || s.includes(t));
+  };
+  const missed: string[] = [];
+  let hit = 0;
+  for (const concept of topics) {
+    if (concept.some(covers)) hit++;
+    else missed.push(concept[0] ?? "?");
+  }
+  return {
+    score: hit / topics.length,
+    metadata: {
+      rationale: `${hit}/${topics.length} topics covered by tags [${(output.tags ?? []).join(", ")}]`,
+      ...(missed.length ? { missedTopics: missed } : {}),
+    },
   };
 });
 

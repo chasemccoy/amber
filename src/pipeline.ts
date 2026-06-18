@@ -100,17 +100,76 @@ export async function archiveUrl(url: string, opts: ArchiveOptions): Promise<Arc
       log(`      ${verdict.reason}`);
     }
   }
+
+  return finishArchive(cap, url, outDir, { backend: usedBackend, backendMode: opts.backend }, opts);
+}
+
+/** A DOM already captured by something other than amber (e.g. a browser extension). */
+export interface DomCapture {
+  url: string;
+  /** Rendered HTML (e.g. `document.documentElement.outerHTML`). */
+  html: string;
+  /** Optional asset bytes the capturer already downloaded, keyed by absolute URL. */
+  resources?: Array<{ url: string; contentType: string; bodyBase64: string }>;
+}
+
+export interface DomArchiveOptions {
+  outRoot: string;
+  useLLM: boolean;
+  planPath?: string;
+  model: string;
+  verbose: boolean;
+  insecureTLS: boolean;
+}
+
+/**
+ * Archive a page whose DOM was captured elsewhere — the browser extension's
+ * path. The extension's own tab is the render backend (JS already ran, the
+ * user's session applied), so there is no Playwright step; amber just fetches
+ * any assets the payload didn't include, then runs the same plan→clean→package
+ * stages as the CLI.
+ */
+export async function archiveFromDom(capture: DomCapture, opts: DomArchiveOptions): Promise<ArchiveResult> {
+  const { url, html } = capture;
+  const outDir = path.join(opts.outRoot, slugifyUrl(url));
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const resources = new Map<string, { contentType: string; body: Buffer }>();
+  for (const r of capture.resources ?? []) {
+    resources.set(r.url.split("#")[0]!, { contentType: r.contentType, body: Buffer.from(r.bodyBase64, "base64") });
+  }
+
+  const cap = new Capturer(outDir, { timeoutMs: 45000, insecureTLS: opts.insecureTLS });
+  cap.loadRender({ html, finalUrl: url, baseUrl: url, resources });
+
+  return finishArchive(cap, url, outDir, { backend: "extension", backendMode: "dom" }, opts);
+}
+
+/**
+ * Shared tail of every backend: snapshot the original HTML, download & localise
+ * assets, decide and apply the cleanup plan, then write the archive folder.
+ * `cap` must already be loaded (fetched, rendered, or fed a DOM).
+ */
+async function finishArchive(
+  cap: Capturer,
+  url: string,
+  outDir: string,
+  provenance: { backend: string; backendMode: string },
+  opts: { useLLM: boolean; planPath?: string; model: string; verbose: boolean },
+): Promise<ArchiveResult> {
+  const log = (m: string) => opts.verbose && console.log(m);
+
   const rawHtml = cap.$.html();
   log("[2/4] Downloading assets and rewriting references");
   await cap.captureAssets();
   log(`      ${cap.assets.length} assets, ${cap.errors.length} errors`);
 
-  // 2. Decide the cleanup plan.
+  // Decide the cleanup plan.
   let plan: CleanupPlan;
   if (opts.planPath) {
     log(`[3/4] Loading cleanup plan from ${opts.planPath}`);
     const loaded = JSON.parse(fs.readFileSync(opts.planPath, "utf8")) as CleanupPlan;
-    plan = { ...loaded, source: loaded.source ?? "file" };
+    plan = { ...loaded, tags: loaded.tags ?? [], source: loaded.source ?? "file" };
   } else if (opts.useLLM && !process.env.ANTHROPIC_API_KEY) {
     log("[3/4] No ANTHROPIC_API_KEY set — using the heuristic plan");
     plan = heuristicPlan(cap.$);
@@ -128,19 +187,20 @@ export async function archiveUrl(url: string, opts: ArchiveOptions): Promise<Arc
   }
   fs.writeFileSync(path.join(outDir, "plan.json"), JSON.stringify(plan, null, 2));
 
-  // 3. Apply it.
+  // Apply it.
   log("[4/4] Applying plan (removing junk, downloading embedded media)");
   const cleanReport = await applyPlan(cap.$, plan, outDir);
   log(`      removed ${cleanReport.removed} elements; ${cleanReport.media.length} media item(s)`);
 
-  // 4. Write final HTML + manifest.
+  // Write final HTML + manifest.
   fs.writeFileSync(path.join(outDir, "index.html"), cap.$.html());
   const manifest = {
     sourceUrl: url,
     finalUrl: cap.finalUrl,
-    backend: usedBackend,
-    backendMode: opts.backend,
+    backend: provenance.backend,
+    backendMode: provenance.backendMode,
     title: plan.title,
+    tags: plan.tags,
     planSource: plan.source,
     assets: cap.assets.map((a) => ({ url: a.url, localPath: a.localPath, ok: a.ok, note: a.note })),
     assetErrors: cap.errors,

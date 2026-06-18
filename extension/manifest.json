@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "amber — archive this page",
+  "version": "0.1.0",
+  "description": "Send the active tab's rendered DOM to the local amber tool to save a self-contained, de-junked offline copy.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuYNo2MXFkFVMyRLhmlZ/7o6CXsYNLe2nK7Wsd0VR29iMYPHL1cooURrQXYdPL+AWrH+dqQ9Odyhrw7z3hUfu+zLJoPYhQkF6451bRFvZFPjPahZScKUzBCediFderJSY3p5+gOujtFsluQ1mI32ZigoittW51E7nWTt/MFyPxZZP6JKGf0aKCcEhrkjiPAg3IefeC9BnTBz8AHfREQBMBiU4OpwVA1A+qoyG47FgTDQyq5crredvYvsLshZHp7QiT0XI9MugndfsHE/OVzeT62LifRj7qOWH9JU1M3NJ/2anmVvwLphkOktj3RrHMiGJKa4kGiYxREzJ5rZ/FdZRRQIDAQAB",
+  "background": { "service_worker": "background.js" },
+  "permissions": ["nativeMessaging", "activeTab", "scripting", "contextMenus", "notifications"],
+  "action": {
+    "default_title": "Archive this page with amber",
+    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png" }
+  },
+  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "commands": {
+    "archive-page": {
+      "suggested_key": { "default": "Ctrl+Shift+Y", "mac": "Command+Shift+Y" },
+      "description": "Archive the current page with amber"
+    }
+  }
+}

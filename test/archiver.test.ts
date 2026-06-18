@@ -3,9 +3,12 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import * as cheerio from "cheerio";
 
-import { slugFor, subdirFor, CSS_URL_RE } from "../src/capture.js";
+import { slugFor, subdirFor, CSS_URL_RE, Capturer } from "../src/capture.js";
 import { heuristicPlan } from "../src/planner.js";
 import { applyPlan } from "../src/clean.js";
 import { assessRendering } from "../src/pipeline.js";
@@ -60,6 +63,17 @@ test("heuristicPlan finds junk but keeps main content", () => {
   assert.ok(!plan.removeSelectors.includes("#content")); // never the main content
 });
 
+test("heuristicPlan derives tags from meta keywords / article:tag, normalised", () => {
+  const $ = cheerio.load(`<html><head><title>T</title>
+    <meta name="keywords" content="Rust, Static Site, rust">
+    <meta property="article:tag" content="Markdown"></head>
+    <body><article>hi</article></body></html>`);
+  const plan = heuristicPlan($);
+  assert.deepEqual(plan.tags, ["rust", "static site", "markdown"]); // lowercased, deduped
+  // No meta → no heuristic tags (the gap the LLM closes).
+  assert.deepEqual(heuristicPlan(cheerio.load("<html><body><p>x</p></body></html>")).tags, []);
+});
+
 test("applyPlan removes junk and sanitises, leaving the original markup faithful", async () => {
   const $ = cheerio.load(`<html><body>
     <div id="ad">junk</div>
@@ -71,6 +85,7 @@ test("applyPlan removes junk and sanitises, leaving the original markup faithful
     mainContentSelector: "#main",
     removeSelectors: ["#ad"],
     media: [],
+    tags: [],
     notes: "",
     source: "test",
   };
@@ -99,6 +114,7 @@ test("applyPlan leaves the embed in place when media download fails", async () =
         kind: "video",
       },
     ],
+    tags: [],
     notes: "",
     source: "test",
   };
@@ -119,6 +135,7 @@ test("applyPlan removes elements whose id is an unescaped React useId selector",
     mainContentSelector: null,
     removeSelectors: ["#drawer_:R196:"],
     media: [],
+    tags: [],
     notes: "",
     source: "test",
   };
@@ -126,6 +143,27 @@ test("applyPlan removes elements whose id is an unescaped React useId selector",
   assert.equal(report.removeErrors.length, 0); // no longer recorded as a failure
   assert.ok(!$.html().includes("junk drawer")); // and actually removed
   assert.ok($.html().includes("keep me"));
+});
+
+test("captureAssets localises a stylesheet and strips crossorigin/integrity so it loads offline", async () => {
+  // Uses the prefetched-resources path, so no network. A `crossorigin` <link>
+  // would be dropped by the browser when opened from file://; SRI would also
+  // fail. Both must be removed once the href is local.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "amber-cap-"));
+  const url = "https://ex.test/page";
+  const cssUrl = "https://ex.test/style.css";
+  const cap = new Capturer(tmp, { timeoutMs: 1000, insecureTLS: false });
+  cap.loadRender({
+    html: `<html><head><link rel="stylesheet" href="${cssUrl}" crossorigin integrity="sha256-abc"></head><body>hi</body></html>`,
+    finalUrl: url,
+    baseUrl: url,
+    resources: new Map([[cssUrl, { contentType: "text/css", body: Buffer.from("body{color:red}") }]]),
+  });
+  await cap.captureAssets();
+  const out = cap.$.html();
+  assert.match(out, /href="assets\/static\//); // stylesheet localised
+  assert.ok(!/crossorigin/i.test(out)); // guard attr stripped
+  assert.ok(!/integrity/i.test(out)); // SRI stripped
 });
 
 test("CSS_URL_RE matches url() and skips data: URIs", () => {

@@ -22,6 +22,8 @@ export interface CleanupPlan {
   /** CSS selectors for junk to delete. */
   removeSelectors: string[];
   media: MediaEmbed[];
+  /** Topical tags describing the page's subject matter, for later browsing/search. */
+  tags: string[];
   notes: string;
   /** "heuristic" | "llm" | "file" | "agent". */
   source: string;

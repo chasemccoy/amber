@@ -8,7 +8,7 @@ amber turns a URL into a self-contained, de-junked offline folder: an
 `index.html` + local `assets/` tree with every reference rewritten to a local
 path, the junk (ads, cookie banners, trackers) removed, and embedded media
 downloaded as a real file. The design splits the work in two: deterministic
-Node does the mechanical capture/rewrite/package; `claude-opus-4-8` does the
+Node does the mechanical capture/rewrite/package; `claude-sonnet-4-6` does the
 judgement (what's junk, what's the main content, which embeds are real media).
 
 ## Commands
@@ -62,7 +62,7 @@ archives/<slug>/
 ├── index.html       # cleaned, faithful to the original (no injected provenance)
 ├── assets/{images,static,media}/
 ├── plan.json        # the applied judgement (pipeline only)
-└── manifest.json    # source/final URL, backend, asset list, errors, cleanReport
+└── manifest.json    # source/final URL, backend, topical tags, asset list, errors, cleanReport
 ```
 
 Asset filenames are `<basename>-<8-char sha1 of full URL><ext>` (`slugFor`), so
@@ -75,7 +75,7 @@ distinct URLs never collide and the same URL is downloaded once (cached).
 - The SDK Zod helpers (`messages.parse`, `betaZodTool`) require
   `@anthropic-ai/sdk` ≥ 0.104 **and Zod 4** — Zod 3 produces a wall of type
   errors. cheerio's element type comes from `domhandler`, not `cheerio`.
-- Model id is `claude-opus-4-8` (overridable with `--model`).
+- Model id is `claude-sonnet-4-6` (overridable with `--model` or `AMBER_MODEL`).
 - The plan is a first-class artifact: `--plan plan.json` replays a saved plan;
   `--no-llm` forces heuristics; `--static` / `--playwright` force a backend.
 - Env: `ANTHROPIC_API_KEY` (plan/agent), `AMBER_INSECURE_TLS=1` (trusted MITM

@@ -3,7 +3,7 @@
  *
  *  - heuristicPlan: no LLM. Strips obvious junk (scripts, iframes, and elements
  *    whose id/class match common ad/cookie/newsletter patterns). The floor.
- *  - llmPlan: asks claude-opus-4-8 to read the page and return a structured
+ *  - llmPlan: asks claude-sonnet-4-6 to read the page and return a structured
  *    cleanup plan — main content, junk selectors, and embedded media to download.
  *    This is the part the article does by hand.
  */
@@ -45,29 +45,71 @@ export function heuristicPlan($: CheerioAPI): CleanupPlan {
     mainContentSelector: null,
     removeSelectors: selectors,
     media: [],
+    tags: heuristicTags($),
     notes:
       "Heuristic plan: stripped scripts/iframes and elements whose id/class match common ad/cookie/newsletter patterns.",
     source: "heuristic",
   };
 }
 
+/**
+ * Without an LLM there is no reading-the-content, so the best we can do is reuse
+ * what the page already declared: <meta keywords> and Open Graph article tags.
+ * Often absent or spammy — which is exactly the gap the LLM tagging closes.
+ */
+function heuristicTags($: CheerioAPI): string[] {
+  const raw: string[] = [];
+  const keywords = $('meta[name="keywords"], meta[name="news_keywords"]').attr("content");
+  if (keywords) raw.push(...keywords.split(","));
+  $('meta[property="article:tag"]').each((_, el) => {
+    const c = $(el).attr("content");
+    if (c) raw.push(c);
+  });
+  return normalizeTags(raw).slice(0, 7);
+}
+
 const SYSTEM = `You are an expert web archivist. You are given the HTML of a single \
 web page that someone wants to save for permanent, offline, personal archival. \
-Your job is the judgement a human archivist would apply by hand:
+Your job is the judgement a human archivist would apply by hand.
 
-1. Identify the MAIN CONTENT — the article/post/page body worth keeping.
-2. Identify JUNK to delete so the saved page is clean and durable: ads, cookie \
-and consent banners, newsletter/subscribe popups, social-share bars, tracking \
-and analytics scripts, "related/recommended" promo modules, time-sensitive \
-notification bars, and anything that depends on a live server.
-3. Identify EMBEDDED MEDIA whose real source should be downloaded instead of the \
-embed — most importantly videos (YouTube/Vimeo) and audio players. For each, \
-give a CSS selector for the embed element and the canonical source URL that a \
-downloader (yt-dlp) can fetch (e.g. the https://www.youtube.com/watch?v=... URL).
+1. MAIN CONTENT — identify the article/post/page body worth keeping (give a selector).
+
+2. REMOVE only genuine junk — things that are advertising, tracking, or live-server \
+cruft, not part of the page's real content:
+   - ads and sponsored slots
+   - cookie / consent / GDPR banners and their overlays and modals
+   - newsletter / subscribe popups and signup forms
+   - social-share bars and comment widgets (Disqus, etc.)
+   - third-party content-recommendation / "around the web" / sponsored-content \
+widgets (Taboola/Outbrain-style), and large grids of unrelated promoted links
+   - login / signup modals and paywall gates
+   - tracking / analytics scripts and time-sensitive notification bars
+   - anything that only works against a live server
+
+3. KEEP the page's own structure and first-party navigation — a faithful archive \
+looks like the original. Do NOT remove the site header, primary navigation, or \
+footer wholesale, and do NOT remove bylines, dates, figure captions, or \
+copyright/attribution. Crucially, KEEP the site's own editorial navigation — \
+next/previous-article teasers and "more from this author/section" links, including \
+their thumbnail images; these are part of the page, not junk. If one of these \
+regions contains a junk widget (e.g. a newsletter form inside the footer), remove \
+that specific child, not the whole region.
+
+4. EMBEDDED MEDIA — identify embeds whose real source should be downloaded instead \
+of the embed (videos: YouTube/Vimeo; audio players). For each, give a CSS selector \
+for the embed element and the canonical source URL a downloader (yt-dlp) can fetch \
+(e.g. the https://www.youtube.com/watch?v=... URL).
+
+5. TAGS — read the actual content and give 3-7 topical tags describing its subject \
+matter, so the saved page can be browsed and searched later. Tags should be \
+lowercase, specific to what the page is about (people, technologies, fields, \
+events, concepts), and concise (one to three words). Use the real topics, not \
+generic words like "article", "blog", "website", or the site's name.
 
 Return selectors that are valid CSS and as specific as needed to be unambiguous. \
-Prefer ids; otherwise tag + class. Be aggressive about junk but never remove the \
-main content. If unsure whether something is the main content, keep it.`;
+Prefer ids; otherwise tag + class. Err strongly on the side of keeping: if there \
+is any doubt whether something is junk or part of the site's own content or \
+navigation, KEEP it — removing too much is worse than leaving a little clutter.`;
 
 const PlanSchema = z.object({
   title: z.string(),
@@ -83,13 +125,16 @@ const PlanSchema = z.object({
       }),
     )
     .describe("Embedded media to download"),
+  tags: z
+    .array(z.string())
+    .describe("3-7 lowercase topical tags describing the page's subject matter (not generic words)"),
   notes: z.string().describe("Brief rationale for the human reviewer"),
 });
 
 export async function llmPlan(
   html: string,
   url: string,
-  model = "claude-opus-4-8",
+  model = "claude-sonnet-4-6",
   maxHtmlChars = 400_000,
 ): Promise<CleanupPlan> {
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
@@ -121,7 +166,22 @@ export async function llmPlan(
     mainContentSelector: p.mainContentSelector,
     removeSelectors: p.removeSelectors,
     media,
+    tags: normalizeTags(p.tags),
     notes: p.notes,
     source: "llm",
   };
+}
+
+/** Lowercase, trim, drop empties/dupes — shared by the LLM and heuristic plans. */
+function normalizeTags(tags: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of tags) {
+    const tag = t.trim().toLowerCase();
+    if (tag && !seen.has(tag)) {
+      seen.add(tag);
+      out.push(tag);
+    }
+  }
+  return out;
 }

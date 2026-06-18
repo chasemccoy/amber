@@ -72,6 +72,18 @@ function isSameDocFragment(raw: string): boolean {
   return r.startsWith("#") || r.startsWith("%23");
 }
 
+/**
+ * Once a reference points at a local copy, `crossorigin` and `integrity` are not
+ * just meaningless — they break the offline page. A `crossorigin` <link>/<script>
+ * opened from `file://` fails its CORS check and the browser silently drops the
+ * resource (the classic "my CSS won't load offline"), and a Subresource
+ * Integrity hash can never match because we rewrite the asset's `url()`s. Strip
+ * both from any element whose URL we've localised.
+ */
+function stripLocalGuards($: CheerioAPI, el: Element): void {
+  $(el).removeAttr("crossorigin").removeAttr("integrity");
+}
+
 export class Capturer {
   readonly assets: Asset[] = [];
   readonly errors: string[] = [];
@@ -201,7 +213,10 @@ export class Capturer {
       const abs = safeUrl(val, this.baseUrl);
       if (!abs) return;
       const ref = this.localRef(htmlRel, await this.download(abs.toString()));
-      if (ref) $(el).attr(attr, ref);
+      if (ref) {
+        $(el).attr(attr, ref);
+        stripLocalGuards($, el);
+      }
     };
 
     const linkRels = new Set(["stylesheet", "icon", "shortcut", "apple-touch-icon", "mask-icon", "preload"]);
@@ -232,6 +247,7 @@ export class Capturer {
     const srcset = $(el).attr(attr);
     if (!srcset) return;
     const out: string[] = [];
+    let localised = false;
     for (const part of srcset.split(",")) {
       const bits = part.trim().split(/\s+/);
       if (!bits[0]) continue;
@@ -239,12 +255,16 @@ export class Capturer {
         const abs = safeUrl(bits[0], this.baseUrl);
         if (abs) {
           const ref = this.localRef(htmlRel, await this.download(abs.toString()));
-          if (ref) bits[0] = ref;
+          if (ref) {
+            bits[0] = ref;
+            localised = true;
+          }
         }
       }
       out.push(bits.join(" "));
     }
     $(el).attr(attr, out.join(", "));
+    if (localised) stripLocalGuards($, el);
   }
 
   private async rewriteInlineStyle(style: string, htmlRel: string): Promise<string> {

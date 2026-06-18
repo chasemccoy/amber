@@ -16,6 +16,10 @@ dist/
 .env
 .env.*
 
+# Extension native-host local secrets + pinned-key identity
+extension/host/host.env
+extension/host/key.pem
+
 # Logs
 *.log
 npm-debug.log*

@@ -1,7 +1,7 @@
 # Local agent workflow
 
 `agent.ts` runs the archiver as a genuine **agentic loop**: after the page and
-its assets are captured, `claude-opus-4-8` drives the cleanup tool by tool —
+its assets are captured, `claude-sonnet-4-6` drives the cleanup tool by tool —
 inspecting the DOM, removing junk, downloading embedded media, and finalising —
 the way the article's author works by hand, but automated.
 

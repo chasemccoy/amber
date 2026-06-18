@@ -5,7 +5,7 @@
  *  - heuristicPlannerHarness — the no-LLM baseline. Runs offline; this is what
  *    actually executes in CI without an API key, and shows how far rule-based
  *    junk detection gets you (good on obvious junk, blind to embedded media).
- *  - llmPlannerHarness — the real judgement: claude-opus-4-8 reads the page and
+ *  - llmPlannerHarness — the real judgement: claude-sonnet-4-6 reads the page and
  *    returns a plan. Needs ANTHROPIC_API_KEY.
  *  - agentHarness — the full tool-using agent loop. Records each tool call so the
  *    built-in ToolCallJudge can check it removed junk, swapped media, finalised.

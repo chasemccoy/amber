@@ -21,7 +21,7 @@ async function main(): Promise<number> {
       static: { type: "boolean", default: false }, // force plain HTTP fetch, never boot Chromium
       playwright: { type: "boolean", default: false }, // force a headless-Chromium render
       plan: { type: "string" },
-      model: { type: "string", default: "claude-opus-4-8" },
+      model: { type: "string", default: "claude-sonnet-4-6" },
       "insecure-tls": { type: "boolean", default: process.env.AMBER_INSECURE_TLS === "1" },
       timeout: { type: "string", default: "45000" },
       quiet: { type: "boolean", short: "q", default: false },

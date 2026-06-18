@@ -20,7 +20,7 @@ import { expect } from "vitest";
 import { describeEval, createHarness, ToolCallJudge, toolCalls } from "vitest-evals";
 import { runAgentLoop } from "../agent/agent.js";
 import { FIXTURES, fixtureMeta, toPlanOutput, type PlanOutput, type EvalMeta } from "./shared.js";
-import { JunkRemovalJudge, MainContentPreservedJudge, MediaFoundJudge } from "./judges.js";
+import { JunkRemovalJudge, MainContentPreservedJudge, StructurePreservedJudge, TagRelevanceJudge, MediaFoundJudge } from "./judges.js";
 import { hasApiKey } from "./harness.js";
 
 // Harness: run the agent loop over the fixture DOM and report the plan it built
@@ -41,6 +41,7 @@ const agentHarness = createHarness<string, PlanOutput, EvalMeta>({
       media: ctx.media
         .filter((m) => m.ok)
         .map((m) => ({ embedSelector: "", sourceUrl: m.sourceUrl, kind: "video", description: "" })),
+      tags: ctx.tags,
       notes: "",
       source: "agent",
     });
@@ -52,7 +53,7 @@ describeEval(
   "archiver agent — tool use + judgement",
   {
     harness: agentHarness,
-    judges: [ToolCallJudge(), JunkRemovalJudge, MainContentPreservedJudge, MediaFoundJudge],
+    judges: [ToolCallJudge(), JunkRemovalJudge, MainContentPreservedJudge, StructurePreservedJudge, TagRelevanceJudge, MediaFoundJudge],
     judgeThreshold: 0.85,
   },
   (it) => {

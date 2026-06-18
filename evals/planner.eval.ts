@@ -13,9 +13,9 @@ import { expect } from "vitest";
 import { describeEval } from "vitest-evals";
 import { FIXTURES, fixtureMeta } from "./shared.js";
 import { heuristicPlannerHarness, llmPlannerHarness, hasApiKey } from "./harness.js";
-import { JunkRemovalJudge, MainContentPreservedJudge, MediaFoundJudge } from "./judges.js";
+import { JunkRemovalJudge, MainContentPreservedJudge, StructurePreservedJudge, TagRelevanceJudge, MediaFoundJudge } from "./judges.js";
 
-const JUDGES = [JunkRemovalJudge, MainContentPreservedJudge, MediaFoundJudge];
+const JUDGES = [JunkRemovalJudge, MainContentPreservedJudge, StructurePreservedJudge, TagRelevanceJudge, MediaFoundJudge];
 
 // Baseline: record scores without failing — heuristics are expected to miss
 // embedded media, and the point is to see the gap, not to gate CI on it.
@@ -34,7 +34,7 @@ describeEval(
 
 // The real judgement. Skipped without a key; held to a high average score.
 describeEval(
-  "cleanup planner — Claude (claude-opus-4-8)",
+  "cleanup planner — Claude (claude-sonnet-4-6)",
   { harness: llmPlannerHarness, judges: JUDGES, judgeThreshold: 0.85 },
   (it) => {
     for (const f of FIXTURES) {

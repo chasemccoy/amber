@@ -23,7 +23,7 @@ The work splits cleanly into two kinds, and that split is the whole design:
 | Run yt-dlp; package the folder | Recognise an embed worth downloading as real media |
 
 The mechanical half is deterministic Node; the judgement half is
-`claude-opus-4-8`. You stay in control: the judgement is written out as a
+`claude-sonnet-4-6`. You stay in control: the judgement is written out as a
 `plan.json` you can read, edit, and replay.
 
 ## Install
@@ -80,7 +80,7 @@ archives/example.com-some-post/
 │   ├── static/        # css, fonts (scripts are stripped, not saved)
 │   └── media/         # videos/audio pulled with yt-dlp
 ├── plan.json          # the cleanup judgement that was applied (auditable)
-└── manifest.json      # source URL, asset list, errors, what was removed
+└── manifest.json      # source URL, topical tags, asset list, errors, what was removed
 ```
 
 ## How it works (pipeline)
@@ -96,10 +96,12 @@ archives/example.com-some-post/
    first, escalating to the Chromium render only when the fetched page looks
    client-rendered (empty SPA mount node, or very little visible text). `--static`
    forces the plain fetch; `--playwright` forces the render.
-2. **Plan** (`src/planner.ts`) — `claude-opus-4-8` (`messages.parse` + a Zod schema)
-   returns `{title, mainContentSelector, removeSelectors, media[], notes}`. A heuristic
-   fallback (strip scripts/iframes + id/class patterns for cookie/ad/newsletter) runs
-   with `--no-llm` or if the API call fails.
+2. **Plan** (`src/planner.ts`) — `claude-sonnet-4-6` (`messages.parse` + a Zod schema)
+   returns `{title, mainContentSelector, removeSelectors, media[], tags[], notes}` —
+   including topical `tags` describing the page's subject matter, for later
+   browsing/search. A heuristic fallback (strip scripts/iframes + id/class patterns
+   for cookie/ad/newsletter; tags from `<meta keywords>` when present) runs with
+   `--no-llm` or if the API call fails.
 3. **Clean** (`src/clean.ts`) — download & swap embedded media first (so a broad
    `iframe` selector can't nuke a video), delete junk by selector, strip inline `on*`
    handlers and dead `javascript:` links, and drop comments. The saved HTML stays
