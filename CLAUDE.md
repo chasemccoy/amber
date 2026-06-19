@@ -57,11 +57,13 @@ Two entry points share the same capture/clean code:
 
 ## Output layout
 
-`archives/<slug>/` — slug is `host` (with leading `www.` stripped) + `pathname`,
-sanitised, ≤80 chars (`slugifyUrl`). Re-archiving the same URL overwrites.
+`<outRoot>/<slug>/` — slug is `host` (with leading `www.` stripped) + `pathname`,
+sanitised, ≤80 chars (`slugifyUrl`). Re-archiving the same URL overwrites. Default
+`outRoot` is `~/Documents/Archives` (CLI `-o` / `AMBER_ARCHIVE_DIR` override it);
+the CLI and the extension's native host share this default.
 
 ```
-archives/<slug>/
+<outRoot>/<slug>/
 ├── index.html       # cleaned, faithful to the original (no injected provenance)
 ├── assets/{images,static,media}/
 ├── plan.json        # the applied judgement (pipeline only)

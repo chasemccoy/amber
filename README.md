@@ -72,8 +72,11 @@ extraction a different way. See `agent/README.md`.
 
 ## What you get
 
+One folder per page under `~/Documents/Archives/` by default (override with `-o`
+or `AMBER_ARCHIVE_DIR`):
+
 ```
-archives/example.com-some-post/
+~/Documents/Archives/example.com-some-post/
 ├── index.html        # cleaned, faithful to the original (provenance lives in manifest.json)
 ├── assets/
 │   ├── images/        # every image, favicon, srcset entry
