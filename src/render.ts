@@ -7,8 +7,6 @@
  * cookie-gated, etc.).
  */
 
-import { chromium } from "playwright";
-
 export const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -29,15 +27,24 @@ export interface RenderOptions {
 /** Scroll the page to trigger lazy-loaded images/content, then return to top. */
 async function autoScroll(page: import("playwright").Page): Promise<void> {
   await page.evaluate(async () => {
+    // This callback runs in the browser. Reach the window/document globals via
+    // globalThis so the file doesn't require the DOM lib when type-checked by a
+    // consumer that imports amber (e.g. a Node server without "DOM" in its lib).
+    const w = globalThis as unknown as {
+      innerHeight: number;
+      scrollBy: (x: number, y: number) => void;
+      scrollTo: (x: number, y: number) => void;
+      document: { body: { scrollHeight: number } };
+    };
     await new Promise<void>((resolve) => {
       let total = 0;
       const step = 600;
       const timer = setInterval(() => {
-        window.scrollBy(0, step);
+        w.scrollBy(0, step);
         total += step;
-        if (total >= document.body.scrollHeight + window.innerHeight) {
+        if (total >= w.document.body.scrollHeight + w.innerHeight) {
           clearInterval(timer);
-          window.scrollTo(0, 0);
+          w.scrollTo(0, 0);
           resolve();
         }
       }, 80);
@@ -46,6 +53,9 @@ async function autoScroll(page: import("playwright").Page): Promise<void> {
 }
 
 export async function renderPage(url: string, opts: RenderOptions): Promise<RenderResult> {
+  // Imported lazily so consumers that never render (e.g. a server doing only
+  // static fetches) don't load Playwright at startup.
+  const { chromium } = await import("playwright");
   const browser = await chromium.launch();
   try {
     const context = await browser.newContext({

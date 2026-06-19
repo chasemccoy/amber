@@ -44,12 +44,15 @@ export function slugFor(url: string, contentType: string): string {
   return `${root}-${digest}${ext}`;
 }
 
-export function subdirFor(contentType: string, url: string): "images" | "static" {
+export function subdirFor(contentType: string, url: string): "images" | "static" | "media" {
   const ct = contentType.split(";")[0]!.trim().toLowerCase();
   if (ct.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg|ico|avif)(\?|$)/i.test(url)) {
     return "images";
   }
-  return "static"; // css, js, fonts, everything else — matches the article's layout
+  if (ct.startsWith("video/") || ct.startsWith("audio/") || /\.(mp4|webm|ogv|ogg|oga|mov|m4v|m4a|mp3|wav|flac|aac|opus|mkv)(\?|$)/i.test(url)) {
+    return "media"; // self-hosted <video>/<audio> — sits alongside yt-dlp downloads
+  }
+  return "static"; // css, fonts, everything else — matches the article's layout
 }
 
 function safeUrl(u: string, base?: string): URL | null {

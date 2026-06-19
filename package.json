@@ -3,6 +3,9 @@
   "version": "0.2.0",
   "description": "Turn a URL into a self-contained, de-junked offline folder, the way Alex Chan does it by hand — but driven by Claude.",
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "bin": {
     "amber": "src/cli.ts"
   },

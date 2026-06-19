@@ -40,11 +40,15 @@ test("slugFor is stable, safe, and collision-resistant", () => {
   assert.notEqual(a, slugFor("https://y.test/path/Foo Bar.CSS?v=1", "text/css"));
 });
 
-test("subdirFor routes images vs static", () => {
+test("subdirFor routes images, media, and static", () => {
   assert.equal(subdirFor("image/png", "http://a/x.png"), "images");
   assert.equal(subdirFor("", "http://a/photo.jpg"), "images");
   assert.equal(subdirFor("text/css", "http://a/s.css"), "static");
   assert.equal(subdirFor("font/woff2", "http://a/f.woff2"), "static");
+  // self-hosted media → media/, by content-type or by extension
+  assert.equal(subdirFor("video/mp4", "http://a/clip"), "media");
+  assert.equal(subdirFor("", "http://a/clip.webm"), "media");
+  assert.equal(subdirFor("audio/mpeg", "http://a/song.mp3"), "media");
 });
 
 test("heuristicPlan finds junk but keeps main content", () => {
