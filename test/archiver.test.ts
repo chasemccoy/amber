@@ -346,7 +346,9 @@ test("archiveFromDom builds a self-contained folder from a pre-captured DOM (no 
   assert.ok(!/<script/i.test(out)); // scripts stripped
   assert.ok(!out.includes("cookies")); // heuristic junk removed
   assert.ok(out.includes("real text")); // main content kept
-  assert.ok(fs.existsSync(path.join(res.outDir, "manifest.json")));
   assert.ok(fs.existsSync(path.join(res.outDir, "plan.json")));
   assert.equal(res.plan.source, "heuristic");
+  const manifest = JSON.parse(fs.readFileSync(path.join(res.outDir, "manifest.json"), "utf8"));
+  assert.equal(manifest.sourceUrl, url);
+  assert.ok(!Number.isNaN(Date.parse(manifest.capturedAt))); // ISO capture timestamp recorded
 });

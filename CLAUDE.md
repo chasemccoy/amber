@@ -67,7 +67,7 @@ the CLI and the extension's native host share this default.
 ├── index.html       # cleaned, faithful to the original (no injected provenance)
 ├── assets/{images,static,media}/
 ├── plan.json        # the applied judgement (pipeline only)
-└── manifest.json    # source/final URL, backend, topical tags, asset list, errors, cleanReport
+└── manifest.json    # source/final URL, capturedAt, backend, topical tags, asset list, errors, cleanReport
 ```
 
 Asset filenames are `<basename>-<8-char sha1 of full URL><ext>` (`slugFor`), so

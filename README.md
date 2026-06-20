@@ -74,7 +74,7 @@ direct network egress and your browser's cookies for yt-dlp. See
 │   ├── static/        # css, fonts
 │   └── media/         # videos/audio — self-hosted files + yt-dlp downloads
 ├── plan.json          # the cleanup judgement that was applied (auditable, replayable)
-└── manifest.json      # source URL, topical tags, asset list, errors, what was removed
+└── manifest.json      # source URL, capture time, topical tags, asset list, errors, what was removed
 ```
 
 The HTML stays byte-faithful to the original — provenance lives in

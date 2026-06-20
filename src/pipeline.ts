@@ -217,6 +217,7 @@ async function finishArchive(
   const manifest = {
     sourceUrl: url,
     finalUrl: cap.finalUrl,
+    capturedAt: new Date().toISOString(),
     backend: provenance.backend,
     backendMode: provenance.backendMode,
     title: plan.title,

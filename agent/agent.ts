@@ -162,6 +162,7 @@ function buildTools(ctx: Ctx) {
         JSON.stringify(
           {
             sourceUrl: ctx.url,
+            capturedAt: new Date().toISOString(),
             title: ctx.title,
             tags: ctx.tags,
             mainContentSelector: ctx.mainSelector,
