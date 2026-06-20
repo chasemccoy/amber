@@ -112,11 +112,6 @@ The mechanical half is deterministic and fast; the judgement half is the part a
 human would otherwise do by hand, one page at a time.
 </details>
 
-## Examples
-
-- [`examples/media-swap-demo/`](examples/media-swap-demo/) — fully self-contained, opens offline. Proves the core trick end-to-end: junk removed and a video `<iframe>` replaced with a real downloaded local `<video>`.
-- [`examples/wordcamp-llms/`](examples/wordcamp-llms/) — a real conference-talk write-up that embeds its YouTube recording: 109 assets localised, sponsor banner and JS-only widgets removed. (Bulky assets are git-ignored; `examples/rebuild.sh` regenerates them.)
-
 ## Development
 
 ```bash
