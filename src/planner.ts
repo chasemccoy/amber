@@ -5,7 +5,7 @@
  *    whose id/class match common ad/cookie/newsletter patterns). The floor.
  *  - llmPlan: asks claude-sonnet-4-6 to read the page and return a structured
  *    cleanup plan — main content, junk selectors, and embedded media to download.
- *    This is the part the article does by hand.
+ *    This is the judgement a human archivist would otherwise apply by hand.
  */
 
 import type { CheerioAPI } from "cheerio";

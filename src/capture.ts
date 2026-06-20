@@ -1,8 +1,8 @@
 /**
  * Deterministic capture: take a page's HTML (rendered or fetched), download
  * every asset it references, and rewrite all references to local paths under
- * an `assets/` tree. Produces the self-contained "mini-website" folder Alex
- * Chan describes — the HTML never reaches back out to the original host.
+ * an `assets/` tree. The result is a self-contained folder whose HTML never
+ * reaches back out to the original host.
  */
 
 import * as fs from "node:fs";
@@ -52,7 +52,7 @@ export function subdirFor(contentType: string, url: string): "images" | "static"
   if (ct.startsWith("video/") || ct.startsWith("audio/") || /\.(mp4|webm|ogv|ogg|oga|mov|m4v|m4a|mp3|wav|flac|aac|opus|mkv)(\?|$)/i.test(url)) {
     return "media"; // self-hosted <video>/<audio> — sits alongside yt-dlp downloads
   }
-  return "static"; // css, fonts, everything else — matches the article's layout
+  return "static"; // css, fonts, everything else
 }
 
 function safeUrl(u: string, base?: string): URL | null {

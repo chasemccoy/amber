@@ -1,10 +1,10 @@
 /**
- * Download embedded media (the YouTube-talk problem) by shelling out to yt-dlp.
+ * Download embedded media by shelling out to yt-dlp.
  *
- * The article's example: a post embeds a YouTube video of a talk; the archivist
- * wants the real video file, not the embed code. yt-dlp resolves and downloads
- * it into `assets/media/`; we hand back the local path so the embed can be
- * swapped for a local <video>/<audio>.
+ * When a page embeds a video or audio player (e.g. a YouTube talk), we want the
+ * real media file, not the embed code. yt-dlp resolves and downloads it into
+ * `assets/media/`; we hand back the local path so the embed can be swapped for a
+ * local <video>/<audio>.
  *
  * yt-dlp is invoked as a binary (the canonical way to use it). Install it on the
  * machine you run this on: `pipx install yt-dlp` or `brew install yt-dlp`.

@@ -1,7 +1,9 @@
 {
   "name": "amber",
   "version": "0.2.0",
-  "description": "Turn a URL into a self-contained, de-junked offline folder, the way Alex Chan does it by hand — but driven by Claude.",
+  "description": "Turn a URL into a self-contained, de-junked offline folder — deterministic capture, judgement by Claude.",
+  "license": "MIT",
+  "author": "Chase McCoy",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

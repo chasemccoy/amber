@@ -3,7 +3,7 @@
 `agent.ts` runs the archiver as a genuine **agentic loop**: after the page and
 its assets are captured, `claude-sonnet-4-6` drives the cleanup tool by tool —
 inspecting the DOM, removing junk, downloading embedded media, and finalising —
-the way the article's author works by hand, but automated.
+the way a careful human works by hand, but automated.
 
 Designed to run **on a machine you own**. That matters:
 
@@ -12,7 +12,7 @@ Designed to run **on a machine you own**. That matters:
 - **Your browser cookies** — pass `--cookies-from-browser` to yt-dlp for
   age-gated / login-walled media (a small extension to `src/media.ts`).
 - **Your filesystem** — archives land in folders you back up (Time Machine,
-  Backblaze, etc.), exactly the setup the article describes.
+  Backblaze, etc.).
 
 ## Run it
 

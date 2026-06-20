@@ -4,10 +4,10 @@
  *
  * Meant to run on a machine *you* own: direct network egress, your browser
  * cookies available to yt-dlp, no TLS-intercepting proxy. Instead of one
- * structured-output call that returns a plan, Claude works the way the
- * article's author does by hand — it captures the page, inspects the DOM,
- * decides what to strip, handles embedded media, and finalises — calling real
- * tools at each step via the Anthropic SDK tool runner.
+ * structured-output call that returns a plan, Claude works the way a careful
+ * human does by hand — it captures the page, inspects the DOM, decides what to
+ * strip, handles embedded media, and finalises — calling real tools at each
+ * step via the Anthropic SDK tool runner.
  *
  *   export ANTHROPIC_API_KEY=...
  *   pnpm agent https://example.com/some-post
