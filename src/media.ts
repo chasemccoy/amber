@@ -21,6 +21,21 @@ export interface MediaResult {
   note: string;
 }
 
+/**
+ * Markup that replaces a media embed once its real file is downloaded — a local
+ * <video>/<audio> with a plain-text fallback naming the archived file. Shared by
+ * the pipeline's clean step and the agent's download_and_swap tool so both emit
+ * identical markup.
+ */
+export function mediaElementHtml(kind: "video" | "audio", localPath: string): string {
+  const tag = kind === "audio" ? "audio" : "video";
+  const style = kind === "video" ? ' style="max-width:100%;height:auto"' : "";
+  return (
+    `<${tag} controls${style}><source src="${localPath}"/>` +
+    `<p>[archived media: ${localPath}]</p></${tag}>`
+  );
+}
+
 function run(cmd: string, args: string[]): Promise<{ code: number; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "ignore", "pipe"] });

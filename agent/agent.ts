@@ -22,7 +22,9 @@ import { z } from "zod";
 import type { CheerioAPI } from "cheerio";
 import { Capturer } from "../src/capture.js";
 import { renderPage } from "../src/render.js";
-import { downloadMedia } from "../src/media.js";
+import { downloadMedia, mediaElementHtml } from "../src/media.js";
+import { selectTolerant } from "../src/clean.js";
+import { normalizeTags } from "../src/planner.js";
 import { slugifyUrl } from "../src/pipeline.js";
 
 interface Ctx {
@@ -36,7 +38,6 @@ interface Ctx {
   tags: string[];
   finalized: boolean;
 }
-let CTX: Ctx;
 
 /** Compact structural view so we don't ship the whole HTML every turn. */
 function domOutline($: CheerioAPI, limit = 120): string {
@@ -58,22 +59,24 @@ function domOutline($: CheerioAPI, limit = 120): string {
   return lines.join("\n");
 }
 
-const tools = [
+/** Build the tool set bound to one run's context (no shared global state). */
+function buildTools(ctx: Ctx) {
+  return [
   betaZodTool({
     name: "get_dom_outline",
     description:
       "Return a compact outline of the captured page (tags, ids, classes, text previews). Use this first.",
     inputSchema: z.object({}),
-    run: async () => domOutline(CTX.$),
+    run: async () => domOutline(ctx.$),
   }),
   betaZodTool({
     name: "inspect",
     description: "Show the full HTML of elements matching a CSS selector, to judge junk vs. main content.",
     inputSchema: z.object({ selector: z.string() }),
     run: async ({ selector }) => {
-      const els = CTX.$(selector).toArray();
+      const els = ctx.$(selector).toArray();
       if (els.length === 0) return "no matches";
-      const out = els.slice(0, 5).map((el) => CTX.$.html(el).slice(0, 1500));
+      const out = els.slice(0, 5).map((el) => ctx.$.html(el).slice(0, 1500));
       return `${els.length} match(es). Showing up to 5:\n\n${out.join("\n---\n")}`;
     },
   }),
@@ -82,7 +85,7 @@ const tools = [
     description: "List embedded media (iframes, <video>, <audio>) with their sources.",
     inputSchema: z.object({}),
     run: async () => {
-      const rows = CTX.$("iframe, video, audio, embed")
+      const rows = ctx.$("iframe, video, audio, embed")
         .toArray()
         .map((el) => `<${el.name}> src=${JSON.stringify(el.attribs?.["src"] ?? "")}`);
       return rows.length ? rows.join("\n") : "no embeds found";
@@ -97,8 +100,8 @@ const tools = [
       const report: string[] = [];
       for (const sel of selectors) {
         try {
-          const m = CTX.$(sel);
-          CTX.removed += m.length;
+          const m = ctx.$(sel);
+          ctx.removed += m.length;
           m.remove();
           report.push(`${sel}: removed ${m.length}`);
         } catch (err) {
@@ -118,14 +121,17 @@ const tools = [
       kind: z.enum(["video", "audio"]).default("video"),
     }),
     run: async ({ embedSelector, sourceUrl, kind }) => {
-      const res = await downloadMedia(sourceUrl, CTX.outDir, kind);
-      CTX.media.push({ sourceUrl, ok: res.ok, localPath: res.localPath });
-      if (!res.ok) return `download failed: ${res.note}`;
-      const target = CTX.$(embedSelector).first();
-      const tag = kind === "audio" ? "audio" : "video";
-      const style = kind === "video" ? ' style="max-width:100%;height:auto"' : "";
-      const matched = target.length > 0;
-      if (matched) target.replaceWith(`<${tag} controls${style}><source src="${res.localPath}"/></${tag}>`);
+      const res = await downloadMedia(sourceUrl, ctx.outDir, kind);
+      ctx.media.push({ sourceUrl, ok: res.ok, localPath: res.localPath });
+      if (!res.ok || !res.localPath) return `download failed: ${res.note}`;
+      let matched = false;
+      try {
+        const target = selectTolerant(ctx.$, embedSelector).first();
+        matched = target.length > 0;
+        if (matched) target.replaceWith(mediaElementHtml(kind, res.localPath));
+      } catch {
+        /* unparseable selector — file is saved, just not swapped */
+      }
       return `downloaded -> ${res.localPath}; ${matched ? `replaced ${embedSelector}` : "selector matched nothing (file saved)"}`;
     },
   }),
@@ -139,10 +145,10 @@ const tools = [
       tags: z.array(z.string()).default([]),
     }),
     run: async ({ selector, title, tags }) => {
-      CTX.mainSelector = selector;
-      CTX.title = title;
-      CTX.tags = tags.map((t) => t.trim().toLowerCase()).filter(Boolean);
-      return `noted main content ${selector}, title ${JSON.stringify(title)}, tags [${CTX.tags.join(", ")}]`;
+      ctx.mainSelector = selector;
+      ctx.title = title;
+      ctx.tags = normalizeTags(tags);
+      return `noted main content ${selector}, title ${JSON.stringify(title)}, tags [${ctx.tags.join(", ")}]`;
     },
   }),
   betaZodTool({
@@ -150,27 +156,28 @@ const tools = [
     description: "Write the finished self-contained archive (index.html + manifest.json). Call this last.",
     inputSchema: z.object({}),
     run: async () => {
-      fs.writeFileSync(path.join(CTX.outDir, "index.html"), CTX.$.html());
+      fs.writeFileSync(path.join(ctx.outDir, "index.html"), ctx.$.html());
       fs.writeFileSync(
-        path.join(CTX.outDir, "manifest.json"),
+        path.join(ctx.outDir, "manifest.json"),
         JSON.stringify(
           {
-            sourceUrl: CTX.url,
-            title: CTX.title,
-            tags: CTX.tags,
-            mainContentSelector: CTX.mainSelector,
-            elementsRemoved: CTX.removed,
-            media: CTX.media,
+            sourceUrl: ctx.url,
+            title: ctx.title,
+            tags: ctx.tags,
+            mainContentSelector: ctx.mainSelector,
+            elementsRemoved: ctx.removed,
+            media: ctx.media,
           },
           null,
           2,
         ),
       );
-      CTX.finalized = true;
-      return `archive written to ${path.join(CTX.outDir, "index.html")}`;
+      ctx.finalized = true;
+      return `archive written to ${path.join(ctx.outDir, "index.html")}`;
     },
   }),
-];
+  ];
+}
 
 const SYSTEM = `You are a meticulous web archivist. You save a single web page as a \
 permanent, self-contained offline copy, the way a careful human does it by hand.
@@ -214,14 +221,14 @@ export async function runAgentLoop(
   url: string,
   opts: { outDir: string; model?: string; onLog?: (m: string) => void },
 ): Promise<AgentLoopResult> {
-  CTX = { url, outDir: opts.outDir, $, removed: 0, media: [], mainSelector: null, title: "", tags: [], finalized: false };
+  const ctx: Ctx = { url, outDir: opts.outDir, $, removed: 0, media: [], mainSelector: null, title: "", tags: [], finalized: false };
   const client = new Anthropic();
   const runner = client.beta.messages.toolRunner({
     model: opts.model ?? "claude-sonnet-4-6",
     max_tokens: 8000,
     thinking: { type: "adaptive" },
     system: SYSTEM,
-    tools,
+    tools: buildTools(ctx),
     messages: [{ role: "user", content: `Archive this page: ${url}` }],
   });
 
@@ -234,9 +241,9 @@ export async function runAgentLoop(
         opts.onLog?.(`[tool]   ${block.name}(${JSON.stringify(block.input).slice(0, 120)})`);
       }
     }
-    if (CTX.finalized) break;
+    if (ctx.finalized) break;
   }
-  return { toolCalls, ctx: CTX };
+  return { toolCalls, ctx };
 }
 
 export async function runAgent(url: string, outRoot = "archives", model = "claude-sonnet-4-6"): Promise<string> {

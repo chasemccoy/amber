@@ -13,10 +13,8 @@
 
 import * as os from "node:os";
 import * as path from "node:path";
-import { archiveFromDom, type DomCapture } from "../../src/pipeline.js";
-
-// Anything amber logs must NOT land on stdout (it would corrupt the framing).
-console.log = console.error;
+import { pathToFileURL } from "node:url";
+import { archiveFromDom, defaultArchiveDir, type DomCapture } from "../../src/pipeline.js";
 
 const LITTLE_ENDIAN = os.endianness() === "LE";
 
@@ -24,12 +22,19 @@ function readUInt32(buf: Buffer, offset: number): number {
   return LITTLE_ENDIAN ? buf.readUInt32LE(offset) : buf.readUInt32BE(offset);
 }
 
-function frame(message: unknown): Buffer {
+/** Encode a message as a native-endian length prefix + UTF-8 JSON body. */
+export function frame(message: unknown): Buffer {
   const body = Buffer.from(JSON.stringify(message), "utf8");
   const header = Buffer.alloc(4);
   if (LITTLE_ENDIAN) header.writeUInt32LE(body.length, 0);
   else header.writeUInt32BE(body.length, 0);
   return Buffer.concat([header, body]);
+}
+
+/** Decode one complete framed message from a buffer (inverse of `frame`). */
+export function decodeMessage(buf: Buffer): unknown {
+  const needed = readUInt32(buf, 0);
+  return JSON.parse(buf.subarray(4, 4 + needed).toString("utf8"));
 }
 
 /** Read exactly one framed message from stdin. */
@@ -46,7 +51,7 @@ function readMessage(): Promise<unknown> {
       if (needed >= 0 && total >= 4 + needed) {
         process.stdin.off("data", onData);
         try {
-          resolve(JSON.parse(buf.subarray(4, 4 + needed).toString("utf8")));
+          resolve(decodeMessage(buf));
         } catch (err) {
           reject(err);
         }
@@ -77,7 +82,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const outRoot = process.env.AMBER_ARCHIVE_DIR || path.join(os.homedir(), "Documents", "Archives");
+  const outRoot = defaultArchiveDir();
 
   try {
     const res = await archiveFromDom(
@@ -106,4 +111,10 @@ async function main(): Promise<void> {
   }
 }
 
-void main();
+// Run the protocol loop only when launched directly by the browser — importing
+// this module (e.g. from a test) must not touch stdin/stdout or reassign console.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  // Anything amber logs must NOT land on stdout (it would corrupt the framing).
+  console.log = console.error;
+  void main();
+}

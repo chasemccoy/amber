@@ -9,9 +9,10 @@ import * as path from "node:path";
 import * as cheerio from "cheerio";
 
 import { slugFor, subdirFor, CSS_URL_RE, Capturer } from "../src/capture.js";
-import { heuristicPlan } from "../src/planner.js";
+import { heuristicPlan, parsePlan } from "../src/planner.js";
 import { applyPlan } from "../src/clean.js";
-import { assessRendering } from "../src/pipeline.js";
+import { mediaElementHtml } from "../src/media.js";
+import { assessRendering, slugifyUrl, archiveFromDom } from "../src/pipeline.js";
 import type { CleanupPlan } from "../src/types.js";
 
 test("assessRendering escalates client-rendered pages, keeps server-rendered ones", () => {
@@ -230,4 +231,122 @@ test("CSS_URL_RE matches url() and skips data: URIs", () => {
   const urls = [...css.matchAll(CSS_URL_RE)].map((m) => m[2]);
   assert.ok(urls.includes("f.woff"));
   assert.ok(urls.includes("/img.png"));
+});
+
+test("slugifyUrl strips www, collapses trailing slashes, sanitises, and caps length", () => {
+  assert.equal(slugifyUrl("https://www.example.com/blog/post/"), "example.com-blog-post");
+  assert.equal(slugifyUrl("https://example.com"), "example.com"); // bare host
+  assert.equal(slugifyUrl("not a url"), "not-a-url"); // unparseable → sanitised raw
+  assert.ok(slugifyUrl("https://e.test/" + "x".repeat(200)).length <= 80); // capped
+});
+
+test("parsePlan fills defaults for a partial plan and rejects non-plans", () => {
+  const p = parsePlan({ removeSelectors: ["#ad"], tags: ["Rust", "rust"] });
+  assert.equal(p.title, "");
+  assert.equal(p.mainContentSelector, null);
+  assert.deepEqual(p.removeSelectors, ["#ad"]);
+  assert.deepEqual(p.media, []);
+  assert.deepEqual(p.tags, ["rust"]); // normalised + deduped
+  assert.equal(p.source, "file"); // default source for a loaded plan
+  // media kind defaults to "video"
+  const m = parsePlan({ media: [{ embedSelector: "iframe", sourceUrl: "u" }] });
+  assert.equal(m.media[0]!.kind, "video");
+  // garbage is rejected rather than silently producing a broken plan
+  assert.throws(() => parsePlan("nope"));
+  assert.throws(() => parsePlan({ removeSelectors: "not-an-array" }));
+});
+
+test("mediaElementHtml builds video/audio markup with a text fallback", () => {
+  const v = mediaElementHtml("video", "assets/media/x.mp4");
+  assert.match(v, /^<video controls style=/); // sized for the page
+  assert.ok(v.includes('<source src="assets/media/x.mp4"/>'));
+  assert.ok(v.includes("[archived media: assets/media/x.mp4]")); // fallback present
+  assert.match(mediaElementHtml("audio", "assets/media/y.mp3"), /^<audio controls>/); // no style on audio
+});
+
+test("applyPlan removes elements via a class selector with illegal CSS chars", async () => {
+  // `.drawer:R1:` is illegal CSS, like the React useId id case but on a class.
+  const $ = cheerio.load(`<body><div class="drawer:R1:">junk drawer</div><article>keep me</article></body>`);
+  const plan: CleanupPlan = {
+    title: "t",
+    mainContentSelector: null,
+    removeSelectors: [".drawer:R1:"],
+    media: [],
+    tags: [],
+    notes: "",
+    source: "test",
+  };
+  const report = await applyPlan($, plan, "/tmp/_amber_cls");
+  assert.equal(report.removeErrors.length, 0); // fell back to an attribute selector
+  assert.ok(!$.html().includes("junk drawer")); // and removed it
+  assert.ok($.html().includes("keep me"));
+});
+
+test("captureAssets localises srcset entries, preserving descriptors", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "amber-srcset-"));
+  const url = "https://ex.test/page";
+  const a = "https://ex.test/a.png";
+  const b = "https://ex.test/b.png";
+  const cap = new Capturer(tmp, { timeoutMs: 1000, insecureTLS: false });
+  cap.loadRender({
+    html: `<body><img srcset="${a} 1x, ${b} 2x"></body>`,
+    finalUrl: url,
+    baseUrl: url,
+    resources: new Map([
+      [a, { contentType: "image/png", body: Buffer.from("A") }],
+      [b, { contentType: "image/png", body: Buffer.from("B") }],
+    ]),
+  });
+  await cap.captureAssets();
+  const out = cap.$.html();
+  assert.ok(!out.includes(a) && !out.includes(b)); // both entries localised
+  assert.match(out, /assets\/images\/\S+ 1x, assets\/images\/\S+ 2x/); // 1x/2x descriptors kept
+});
+
+test("captureAssets rewrites url() inside a linked .css file (recursively)", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "amber-cssfile-"));
+  const url = "https://ex.test/page";
+  const cssUrl = "https://ex.test/site.css";
+  const fontUrl = "https://ex.test/font.woff2";
+  const cap = new Capturer(tmp, { timeoutMs: 1000, insecureTLS: false });
+  cap.loadRender({
+    html: `<head><link rel="stylesheet" href="${cssUrl}"></head><body>hi</body>`,
+    finalUrl: url,
+    baseUrl: url,
+    resources: new Map([
+      [cssUrl, { contentType: "text/css", body: Buffer.from(`@font-face{src:url(${fontUrl})}`) }],
+      [fontUrl, { contentType: "font/woff2", body: Buffer.from("FONT") }],
+    ]),
+  });
+  await cap.captureAssets();
+  const cssAsset = cap.assets.find((x) => x.url === cssUrl)!;
+  const css = fs.readFileSync(path.join(tmp, cssAsset.localPath), "utf8");
+  assert.ok(!css.includes(fontUrl)); // network url() gone
+  assert.match(css, /url\(font-[0-9a-f]{8}\.woff2\)/); // rewritten to the local sibling
+});
+
+test("archiveFromDom builds a self-contained folder from a pre-captured DOM (no network)", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "amber-dom-"));
+  const url = "https://ex.test/post";
+  const imgUrl = "https://ex.test/pic.png";
+  const html = `<!doctype html><html><head><title>Post</title></head><body>
+    <div id="cookie-banner">cookies</div>
+    <article id="content"><img src="${imgUrl}"> real text</article>
+    <script>track()</script></body></html>`;
+  const res = await archiveFromDom(
+    {
+      url,
+      html,
+      resources: [{ url: imgUrl, contentType: "image/png", bodyBase64: Buffer.from("PNG").toString("base64") }],
+    },
+    { outRoot: tmp, useLLM: false, model: "x", verbose: false, insecureTLS: false }, // useLLM:false → offline heuristics
+  );
+  const out = fs.readFileSync(path.join(res.outDir, "index.html"), "utf8");
+  assert.match(out, /assets\/images\//); // image localised from the payload, no network
+  assert.ok(!/<script/i.test(out)); // scripts stripped
+  assert.ok(!out.includes("cookies")); // heuristic junk removed
+  assert.ok(out.includes("real text")); // main content kept
+  assert.ok(fs.existsSync(path.join(res.outDir, "manifest.json")));
+  assert.ok(fs.existsSync(path.join(res.outDir, "plan.json")));
+  assert.equal(res.plan.source, "heuristic");
 });

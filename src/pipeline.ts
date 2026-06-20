@@ -1,16 +1,26 @@
 /** Orchestrate render/fetch -> capture -> plan -> clean -> package. */
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { CheerioAPI } from "cheerio";
 import { Capturer } from "./capture.js";
 import { renderPage } from "./render.js";
-import { heuristicPlan, llmPlan } from "./planner.js";
+import { heuristicPlan, llmPlan, parsePlan } from "./planner.js";
 import { applyPlan, type CleanReport } from "./clean.js";
 import type { CleanupPlan, CaptureOptions } from "./types.js";
 
 // Empty-when-JS-hasn't-run mount points for the common SPA frameworks.
 const SPA_ROOTS = ["#root", "#app", "#__next", "#__nuxt", "[data-reactroot]"];
+
+/**
+ * Default archive root, shared by the CLI and the extension's native host so
+ * both write to the same place. `AMBER_ARCHIVE_DIR` overrides it; the CLI's `-o`
+ * overrides further.
+ */
+export function defaultArchiveDir(): string {
+  return process.env.AMBER_ARCHIVE_DIR || path.join(os.homedir(), "Documents", "Archives");
+}
 
 /**
  * Decide whether a *static* fetch under-rendered the page and a browser render
@@ -86,18 +96,29 @@ export async function archiveUrl(url: string, opts: ArchiveOptions): Promise<Arc
     await cap.fetchPage(url);
   } else {
     log(`[1/4] Fetching ${url} (static probe)`);
-    await cap.fetchPage(url);
-    const verdict = assessRendering(cap.$);
-    if (verdict.escalate) {
-      log(`      ${verdict.reason} -> re-capturing in headless Chromium`);
+    // Escalate to a browser render when the static capture either under-renders
+    // (client-rendered page) or fails outright (e.g. a 403 to a bot-blocking
+    // server that a real browser would pass).
+    let escalateReason: string | null = null;
+    try {
+      await cap.fetchPage(url);
+      const verdict = assessRendering(cap.$);
+      if (verdict.escalate) escalateReason = verdict.reason;
+      else log(`      ${verdict.reason}`);
+    } catch (err) {
+      escalateReason = `static fetch failed (${err})`;
+    }
+    if (escalateReason) {
+      log(`      ${escalateReason} -> re-capturing in headless Chromium`);
       try {
         await render();
         usedBackend = "playwright";
       } catch (err) {
+        // If the static fetch also failed we have nothing to package — surface
+        // the render error rather than continuing with an empty capture.
+        if (!cap.$) throw err;
         log(`      browser render unavailable (${err}); keeping the static capture`);
       }
-    } else {
-      log(`      ${verdict.reason}`);
     }
   }
 
@@ -168,8 +189,7 @@ async function finishArchive(
   let plan: CleanupPlan;
   if (opts.planPath) {
     log(`[3/4] Loading cleanup plan from ${opts.planPath}`);
-    const loaded = JSON.parse(fs.readFileSync(opts.planPath, "utf8")) as CleanupPlan;
-    plan = { ...loaded, tags: loaded.tags ?? [], source: loaded.source ?? "file" };
+    plan = parsePlan(JSON.parse(fs.readFileSync(opts.planPath, "utf8")));
   } else if (opts.useLLM && !process.env.ANTHROPIC_API_KEY) {
     log("[3/4] No ANTHROPIC_API_KEY set — using the heuristic plan");
     plan = heuristicPlan(cap.$);

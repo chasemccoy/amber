@@ -173,7 +173,7 @@ export async function llmPlan(
 }
 
 /** Lowercase, trim, drop empties/dupes — shared by the LLM and heuristic plans. */
-function normalizeTags(tags: string[]): string[] {
+export function normalizeTags(tags: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const t of tags) {
@@ -184,4 +184,48 @@ function normalizeTags(tags: string[]): string[] {
     }
   }
   return out;
+}
+
+/**
+ * Lenient schema for a plan loaded from disk (`--plan plan.json`). Plans are a
+ * first-class, hand-editable artifact, so every field has a sensible default —
+ * a partial or slightly malformed file is coerced into a usable plan rather than
+ * crashing deep in `applyPlan`.
+ */
+const StoredPlanSchema = z.object({
+  title: z.string().default(""),
+  mainContentSelector: z.string().nullable().default(null),
+  removeSelectors: z.array(z.string()).default([]),
+  media: z
+    .array(
+      z.object({
+        embedSelector: z.string(),
+        sourceUrl: z.string(),
+        kind: z.enum(["video", "audio"]).default("video"),
+        description: z.string().default(""),
+      }),
+    )
+    .default([]),
+  tags: z.array(z.string()).default([]),
+  notes: z.string().default(""),
+  source: z.string().default("file"),
+});
+
+/** Validate and normalise a plan parsed from JSON (throws ZodError if unusable). */
+export function parsePlan(raw: unknown): CleanupPlan {
+  const p = StoredPlanSchema.parse(raw);
+  return {
+    title: p.title,
+    mainContentSelector: p.mainContentSelector,
+    removeSelectors: p.removeSelectors,
+    media: p.media.map((m) => ({
+      embedSelector: m.embedSelector,
+      sourceUrl: m.sourceUrl,
+      kind: m.kind,
+      description: m.description,
+    })),
+    tags: normalizeTags(p.tags),
+    notes: p.notes,
+    source: p.source,
+  };
 }

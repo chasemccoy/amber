@@ -1,7 +1,7 @@
 /** Apply a CleanupPlan to captured HTML: swap media, delete junk, add provenance. */
 
 import type { CheerioAPI } from "cheerio";
-import { downloadMedia, type MediaResult } from "./media.js";
+import { downloadMedia, mediaElementHtml, type MediaResult } from "./media.js";
 import type { CleanupPlan } from "./types.js";
 
 export interface CleanReport {
@@ -87,7 +87,7 @@ export async function applyPlan(
  * simple `#id` / `.class` selector fails to parse, retry as an attribute
  * selector (`[id="…"]` / `[class~="…"]`), which has no such restriction.
  */
-function selectTolerant($: CheerioAPI, sel: string) {
+export function selectTolerant($: CheerioAPI, sel: string) {
   try {
     return $(sel);
   } catch (err) {
@@ -111,15 +111,10 @@ function cssAttrEscape(s: string): string {
 function replaceWithLocalMedia($: CheerioAPI, selector: string, res: MediaResult, kind: "video" | "audio"): void {
   let target;
   try {
-    target = $(selector).first();
+    target = selectTolerant($, selector).first();
   } catch {
     return;
   }
-  if (!target || target.length === 0) return;
-  const tag = kind === "audio" ? "audio" : "video";
-  const style = kind === "video" ? ' style="max-width:100%;height:auto"' : "";
-  target.replaceWith(
-    `<${tag} controls${style}><source src="${res.localPath}"/>` +
-      `<p>[archived media: ${res.localPath}]</p></${tag}>`,
-  );
+  if (!target || target.length === 0 || !res.localPath) return;
+  target.replaceWith(mediaElementHtml(kind, res.localPath));
 }

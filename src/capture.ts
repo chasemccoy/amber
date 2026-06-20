@@ -132,11 +132,11 @@ export class Capturer {
 
   // -- downloading --------------------------------------------------------
 
-  private async getBytes(absUrl: string): Promise<{ contentType: string; body: Buffer } | null> {
+  // Caller (`download`) has already validated the protocol, so this only has to
+  // serve a prefetched body or fetch one.
+  private async getBytes(absUrl: string): Promise<{ contentType: string; body: Buffer }> {
     const cached = this.prefetched.get(absUrl);
     if (cached) return cached;
-    const u = safeUrl(absUrl);
-    if (!u || (u.protocol !== "http:" && u.protocol !== "https:")) return null;
     const res = await fetch(absUrl, { headers: { "User-Agent": USER_AGENT } });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = Buffer.from(await res.arrayBuffer());
@@ -150,7 +150,7 @@ export class Capturer {
     const u = safeUrl(absUrl);
     if (!u || (u.protocol !== "http:" && u.protocol !== "https:")) return null; // data:, mailto:, …
 
-    let got: { contentType: string; body: Buffer } | null;
+    let got: { contentType: string; body: Buffer };
     try {
       got = await this.getBytes(absUrl);
     } catch (err) {
@@ -159,7 +159,6 @@ export class Capturer {
       this.errors.push(`${absUrl}: ${err}`);
       return asset;
     }
-    if (!got) return null;
 
     const subdir = subdirFor(got.contentType, absUrl);
     const rel = `assets/${subdir}/${slugFor(absUrl, got.contentType)}`;

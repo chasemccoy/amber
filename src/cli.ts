@@ -10,18 +10,13 @@
  */
 
 import { parseArgs } from "node:util";
-import * as os from "node:os";
-import * as path from "node:path";
-import { archiveUrl } from "./pipeline.js";
-
-/** Default archive root — matches the extension's native host. `-o` overrides. */
-const DEFAULT_OUT = process.env.AMBER_ARCHIVE_DIR || path.join(os.homedir(), "Documents", "Archives");
+import { archiveUrl, defaultArchiveDir } from "./pipeline.js";
 
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
-      out: { type: "string", short: "o", default: DEFAULT_OUT },
+      out: { type: "string", short: "o", default: defaultArchiveDir() },
       "no-llm": { type: "boolean", default: false },
       static: { type: "boolean", default: false }, // force plain HTTP fetch, never boot Chromium
       playwright: { type: "boolean", default: false }, // force a headless-Chromium render
