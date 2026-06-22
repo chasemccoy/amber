@@ -348,7 +348,40 @@ test("archiveFromDom builds a self-contained folder from a pre-captured DOM (no 
   assert.ok(out.includes("real text")); // main content kept
   assert.ok(fs.existsSync(path.join(res.outDir, "plan.json")));
   assert.equal(res.plan.source, "heuristic");
+  assert.equal(res.changed, true);
   const manifest = JSON.parse(fs.readFileSync(path.join(res.outDir, "manifest.json"), "utf8"));
   assert.equal(manifest.sourceUrl, url);
   assert.ok(!Number.isNaN(Date.parse(manifest.capturedAt))); // ISO capture timestamp recorded
+  assert.ok(/^[0-9a-f]{64}$/.test(manifest.contentHash)); // content hash recorded
+});
+
+test("archiveFromDom versions snapshots and skips unchanged re-captures", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "amber-ver-"));
+  const url = "https://ex.test/post";
+  const opts = { outRoot: tmp, useLLM: false, model: "x", verbose: false, insecureTLS: false };
+
+  const v1 = await archiveFromDom({ url, html: `<article id="content">version one</article>` }, opts);
+  assert.equal(v1.changed, true);
+  assert.equal(v1.archivedTo, null);
+
+  // Identical re-capture → skipped, no version created.
+  const again = await archiveFromDom({ url, html: `<article id="content">version one</article>` }, opts);
+  assert.equal(again.changed, false);
+  assert.equal(again.outDir, v1.outDir);
+  assert.ok(!fs.existsSync(path.join(v1.outDir, "versions")));
+
+  // Changed content → previous latest rotates into versions/.
+  const v2 = await archiveFromDom({ url, html: `<article id="content">version two</article>` }, opts);
+  assert.equal(v2.changed, true);
+  assert.ok(v2.archivedTo);
+  const versions = fs.readdirSync(path.join(v1.outDir, "versions"));
+  assert.equal(versions.length, 1);
+  assert.match(fs.readFileSync(path.join(v1.outDir, "index.html"), "utf8"), /version two/); // latest
+  assert.match(
+    fs.readFileSync(path.join(v1.outDir, "versions", versions[0]!, "index.html"), "utf8"),
+    /version one/, // older snapshot preserved
+  );
+
+  // No staging dirs left lying around under the archive root.
+  assert.ok(!fs.readdirSync(tmp).some((n) => n.startsWith(".amber-tmp-")));
 });

@@ -8,6 +8,7 @@ import { Capturer } from "./capture.js";
 import { renderPage } from "./render.js";
 import { heuristicPlan, llmPlan, parsePlan } from "./planner.js";
 import { applyPlan, type CleanReport } from "./clean.js";
+import { commitSnapshot, hashSnapshotContent } from "./snapshot.js";
 import type { CleanupPlan, CaptureOptions } from "./types.js";
 
 // Empty-when-JS-hasn't-run mount points for the common SPA frameworks.
@@ -62,6 +63,8 @@ export interface ArchiveOptions extends CaptureOptions {
   planPath?: string;
   model: string;
   verbose: boolean;
+  /** Replace the latest snapshot in place instead of keeping history. */
+  overwrite?: boolean;
 }
 
 export interface ArchiveResult {
@@ -70,59 +73,76 @@ export interface ArchiveResult {
   assetCount: number;
   assetErrors: number;
   cleanReport: CleanReport;
+  /** False when the capture was identical to the existing latest (no new snapshot). */
+  changed: boolean;
+  /** Where the previous latest was archived, or null (first run / overwrite). */
+  archivedTo: string | null;
+}
+
+/** Create a same-filesystem staging dir under `outRoot` to build a snapshot in. */
+function makeStagingDir(outRoot: string): string {
+  fs.mkdirSync(outRoot, { recursive: true });
+  return fs.mkdtempSync(path.join(outRoot, ".amber-tmp-"));
 }
 
 export async function archiveUrl(url: string, opts: ArchiveOptions): Promise<ArchiveResult> {
   const log = (m: string) => opts.verbose && console.log(m);
   const outDir = path.join(opts.outRoot, slugifyUrl(url));
-  fs.mkdirSync(outDir, { recursive: true });
+  // Build into staging, then commit; the previous latest stays untouched until
+  // the new snapshot is fully built.
+  const staging = makeStagingDir(opts.outRoot);
 
-  // 1. Capture page + assets. The default "auto" backend fetches statically
-  // first and only boots Chromium when the page looks client-rendered, so a
-  // plain server-rendered page never pays the browser cost.
-  const cap = new Capturer(outDir, { timeoutMs: opts.timeoutMs, insecureTLS: opts.insecureTLS });
-  const render = async () => {
-    const r = await renderPage(url, { timeoutMs: opts.timeoutMs, insecureTLS: opts.insecureTLS });
-    cap.loadRender(r);
-  };
-  let usedBackend: "fetch" | "playwright" = "fetch";
+  try {
+    // 1. Capture page + assets. The default "auto" backend fetches statically
+    // first and only boots Chromium when the page looks client-rendered, so a
+    // plain server-rendered page never pays the browser cost.
+    const cap = new Capturer(staging, { timeoutMs: opts.timeoutMs, insecureTLS: opts.insecureTLS });
+    const render = async () => {
+      const r = await renderPage(url, { timeoutMs: opts.timeoutMs, insecureTLS: opts.insecureTLS });
+      cap.loadRender(r);
+    };
+    let usedBackend: "fetch" | "playwright" = "fetch";
 
-  if (opts.backend === "playwright") {
-    log(`[1/4] Rendering ${url} in headless Chromium`);
-    await render();
-    usedBackend = "playwright";
-  } else if (opts.backend === "fetch") {
-    log(`[1/4] Fetching ${url} (static)`);
-    await cap.fetchPage(url);
-  } else {
-    log(`[1/4] Fetching ${url} (static probe)`);
-    // Escalate to a browser render when the static capture either under-renders
-    // (client-rendered page) or fails outright (e.g. a 403 to a bot-blocking
-    // server that a real browser would pass).
-    let escalateReason: string | null = null;
-    try {
+    if (opts.backend === "playwright") {
+      log(`[1/4] Rendering ${url} in headless Chromium`);
+      await render();
+      usedBackend = "playwright";
+    } else if (opts.backend === "fetch") {
+      log(`[1/4] Fetching ${url} (static)`);
       await cap.fetchPage(url);
-      const verdict = assessRendering(cap.$);
-      if (verdict.escalate) escalateReason = verdict.reason;
-      else log(`      ${verdict.reason}`);
-    } catch (err) {
-      escalateReason = `static fetch failed (${err})`;
-    }
-    if (escalateReason) {
-      log(`      ${escalateReason} -> re-capturing in headless Chromium`);
+    } else {
+      log(`[1/4] Fetching ${url} (static probe)`);
+      // Escalate to a browser render when the static capture either under-renders
+      // (client-rendered page) or fails outright (e.g. a 403 to a bot-blocking
+      // server that a real browser would pass).
+      let escalateReason: string | null = null;
       try {
-        await render();
-        usedBackend = "playwright";
+        await cap.fetchPage(url);
+        const verdict = assessRendering(cap.$);
+        if (verdict.escalate) escalateReason = verdict.reason;
+        else log(`      ${verdict.reason}`);
       } catch (err) {
-        // If the static fetch also failed we have nothing to package — surface
-        // the render error rather than continuing with an empty capture.
-        if (!cap.$) throw err;
-        log(`      browser render unavailable (${err}); keeping the static capture`);
+        escalateReason = `static fetch failed (${err})`;
+      }
+      if (escalateReason) {
+        log(`      ${escalateReason} -> re-capturing in headless Chromium`);
+        try {
+          await render();
+          usedBackend = "playwright";
+        } catch (err) {
+          // If the static fetch also failed we have nothing to package — surface
+          // the render error rather than continuing with an empty capture.
+          if (!cap.$) throw err;
+          log(`      browser render unavailable (${err}); keeping the static capture`);
+        }
       }
     }
-  }
 
-  return finishArchive(cap, url, outDir, { backend: usedBackend, backendMode: opts.backend }, opts);
+    return await finishArchive(cap, url, outDir, { backend: usedBackend, backendMode: opts.backend }, opts);
+  } catch (err) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw err;
+  }
 }
 
 /** A DOM already captured by something other than amber (e.g. a browser extension). */
@@ -141,6 +161,8 @@ export interface DomArchiveOptions {
   model: string;
   verbose: boolean;
   insecureTLS: boolean;
+  /** Replace the latest snapshot in place instead of keeping history. */
+  overwrite?: boolean;
 }
 
 /**
@@ -153,17 +175,22 @@ export interface DomArchiveOptions {
 export async function archiveFromDom(capture: DomCapture, opts: DomArchiveOptions): Promise<ArchiveResult> {
   const { url, html } = capture;
   const outDir = path.join(opts.outRoot, slugifyUrl(url));
-  fs.mkdirSync(outDir, { recursive: true });
+  const staging = makeStagingDir(opts.outRoot);
 
-  const resources = new Map<string, { contentType: string; body: Buffer }>();
-  for (const r of capture.resources ?? []) {
-    resources.set(r.url.split("#")[0]!, { contentType: r.contentType, body: Buffer.from(r.bodyBase64, "base64") });
+  try {
+    const resources = new Map<string, { contentType: string; body: Buffer }>();
+    for (const r of capture.resources ?? []) {
+      resources.set(r.url.split("#")[0]!, { contentType: r.contentType, body: Buffer.from(r.bodyBase64, "base64") });
+    }
+
+    const cap = new Capturer(staging, { timeoutMs: 45000, insecureTLS: opts.insecureTLS });
+    cap.loadRender({ html, finalUrl: url, baseUrl: url, resources });
+
+    return await finishArchive(cap, url, outDir, { backend: "extension", backendMode: "dom" }, opts);
+  } catch (err) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw err;
   }
-
-  const cap = new Capturer(outDir, { timeoutMs: 45000, insecureTLS: opts.insecureTLS });
-  cap.loadRender({ html, finalUrl: url, baseUrl: url, resources });
-
-  return finishArchive(cap, url, outDir, { backend: "extension", backendMode: "dom" }, opts);
 }
 
 /**
@@ -176,9 +203,10 @@ async function finishArchive(
   url: string,
   outDir: string,
   provenance: { backend: string; backendMode: string },
-  opts: { useLLM: boolean; planPath?: string; model: string; verbose: boolean },
+  opts: { useLLM: boolean; planPath?: string; model: string; verbose: boolean; overwrite?: boolean },
 ): Promise<ArchiveResult> {
   const log = (m: string) => opts.verbose && console.log(m);
+  const staging = cap.rootDir; // the snapshot is built here, then committed to outDir
 
   const rawHtml = cap.$.html();
   log("[2/4] Downloading assets and rewriting references");
@@ -205,19 +233,21 @@ async function finishArchive(
     log("[3/4] Building heuristic cleanup plan (no LLM)");
     plan = heuristicPlan(cap.$);
   }
-  fs.writeFileSync(path.join(outDir, "plan.json"), JSON.stringify(plan, null, 2));
+  fs.writeFileSync(path.join(staging, "plan.json"), JSON.stringify(plan, null, 2));
 
   // Apply it.
   log("[4/4] Applying plan (removing junk, downloading embedded media)");
-  const cleanReport = await applyPlan(cap.$, plan, outDir);
+  const cleanReport = await applyPlan(cap.$, plan, staging);
   log(`      removed ${cleanReport.removed} elements; ${cleanReport.media.length} media item(s)`);
 
-  // Write final HTML + manifest.
-  fs.writeFileSync(path.join(outDir, "index.html"), cap.$.html());
+  // Write final HTML, then hash the content (HTML + assets) for change detection.
+  fs.writeFileSync(path.join(staging, "index.html"), cap.$.html());
+  const contentHash = hashSnapshotContent(staging);
   const manifest = {
     sourceUrl: url,
     finalUrl: cap.finalUrl,
     capturedAt: new Date().toISOString(),
+    contentHash,
     backend: provenance.backend,
     backendMode: provenance.backendMode,
     title: plan.title,
@@ -227,14 +257,21 @@ async function finishArchive(
     assetErrors: cap.errors,
     cleanReport,
   };
-  fs.writeFileSync(path.join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2));
+  fs.writeFileSync(path.join(staging, "manifest.json"), JSON.stringify(manifest, null, 2));
 
-  log(`Done -> ${path.join(outDir, "index.html")}`);
+  // Commit: rotate the previous latest into versions/, or skip if unchanged.
+  const commit = commitSnapshot(staging, outDir, { overwrite: opts.overwrite });
+  if (!commit.changed) log(`Unchanged — kept existing snapshot at ${outDir}`);
+  else if (commit.archivedTo) log(`Done -> ${path.join(outDir, "index.html")} (previous archived to ${commit.archivedTo})`);
+  else log(`Done -> ${path.join(outDir, "index.html")}`);
+
   return {
     outDir,
     plan,
     assetCount: cap.assets.length,
     assetErrors: cap.errors.length,
     cleanReport,
+    changed: commit.changed,
+    archivedTo: commit.archivedTo,
   };
 }

@@ -50,6 +50,7 @@ pnpm archive --no-llm     <url>        # heuristics only, never call the model
 pnpm archive --static     <url>        # force a plain HTTP fetch (never boot Chromium)
 pnpm archive --playwright <url>        # force a headless-Chromium render
 pnpm archive --plan plan.json <url>    # replay or audit a saved plan
+pnpm archive --overwrite      <url>    # replace the latest snapshot, keep no history
 pnpm archive -o ~/somewhere   <url>    # choose the output directory
 ```
 
@@ -68,19 +69,32 @@ direct network egress and your browser's cookies for yt-dlp. See
 
 ```
 ~/Documents/Archives/example.com-some-post/
-├── index.html        # cleaned, faithful to the original
+├── index.html        # cleaned, faithful to the original — always the newest capture
 ├── assets/
 │   ├── images/        # every image, favicon, srcset entry
 │   ├── static/        # css, fonts
 │   └── media/         # videos/audio — self-hosted files + yt-dlp downloads
 ├── plan.json          # the cleanup judgement that was applied (auditable, replayable)
-└── manifest.json      # source URL, capture time, topical tags, asset list, errors, what was removed
+├── manifest.json      # source URL, capture time, topical tags, asset list, errors, what was removed
+└── versions/          # older snapshots (only after you re-archive), each a full archive
+    └── 20260102T090000Z/    # … with its own index.html + assets + manifest
 ```
 
 The HTML stays byte-faithful to the original — provenance lives in
 `manifest.json`, not injected into the page. `<a href>` links are left pointing
 at the live web by design: amber localises what a page *loads*, not where it
 *links*.
+
+## History over time
+
+Re-archiving a URL keeps the old copy. The newest capture stays at `<slug>/`, and
+the previous one rotates into `<slug>/versions/<timestamp>/` — each version is a
+complete, self-contained archive you can open on its own. The folders *are* the
+history; there's no index to maintain.
+
+An identical re-capture is detected (by a content hash that ignores timestamps)
+and skipped, so a page that hasn't changed doesn't pile up duplicate snapshots.
+Pass `--overwrite` to replace the latest in place and keep no history.
 
 ## How it works
 

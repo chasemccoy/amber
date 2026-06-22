@@ -26,6 +26,7 @@ import { downloadMedia, mediaElementHtml } from "../src/media.js";
 import { selectTolerant } from "../src/clean.js";
 import { normalizeTags } from "../src/planner.js";
 import { slugifyUrl } from "../src/pipeline.js";
+import { commitSnapshot, hashSnapshotContent } from "../src/snapshot.js";
 
 interface Ctx {
   url: string;
@@ -157,12 +158,14 @@ function buildTools(ctx: Ctx) {
     inputSchema: z.object({}),
     run: async () => {
       fs.writeFileSync(path.join(ctx.outDir, "index.html"), ctx.$.html());
+      const contentHash = hashSnapshotContent(ctx.outDir);
       fs.writeFileSync(
         path.join(ctx.outDir, "manifest.json"),
         JSON.stringify(
           {
             sourceUrl: ctx.url,
             capturedAt: new Date().toISOString(),
+            contentHash,
             title: ctx.title,
             tags: ctx.tags,
             mainContentSelector: ctx.mainSelector,
@@ -247,31 +250,49 @@ export async function runAgentLoop(
   return { toolCalls, ctx };
 }
 
-export async function runAgent(url: string, outRoot = "archives", model = "claude-sonnet-4-6"): Promise<string> {
+export async function runAgent(
+  url: string,
+  outRoot = "archives",
+  model = "claude-sonnet-4-6",
+  opts: { overwrite?: boolean } = {},
+): Promise<string> {
   const outDir = path.join(outRoot, slugifyUrl(url));
-  fs.mkdirSync(outDir, { recursive: true });
+  // Build into staging, then commit (same versioning as the pipeline).
+  fs.mkdirSync(outRoot, { recursive: true });
+  const staging = fs.mkdtempSync(path.join(outRoot, ".amber-tmp-"));
 
-  console.log(`[capture] rendering + localising assets for ${url}`);
-  const insecure = process.env.AMBER_INSECURE_TLS === "1";
-  const cap = new Capturer(outDir, { timeoutMs: 45000, insecureTLS: insecure });
-  cap.loadRender(await renderPage(url, { timeoutMs: 45000, insecureTLS: insecure }));
-  await cap.captureAssets();
-  console.log(`[capture] ${cap.assets.length} assets, ${cap.errors.length} errors`);
+  try {
+    console.log(`[capture] rendering + localising assets for ${url}`);
+    const insecure = process.env.AMBER_INSECURE_TLS === "1";
+    const cap = new Capturer(staging, { timeoutMs: 45000, insecureTLS: insecure });
+    cap.loadRender(await renderPage(url, { timeoutMs: 45000, insecureTLS: insecure }));
+    await cap.captureAssets();
+    console.log(`[capture] ${cap.assets.length} assets, ${cap.errors.length} errors`);
 
-  await runAgentLoop(cap.$, url, { outDir, model, onLog: (m) => console.log(m) });
+    const { ctx } = await runAgentLoop(cap.$, url, { outDir: staging, model, onLog: (m) => console.log(m) });
+    if (!ctx.finalized) throw new Error("agent finished without calling finalize — nothing to commit");
 
-  console.log(`[done]   ${outDir}/index.html`);
-  return outDir;
+    const commit = commitSnapshot(staging, outDir, { overwrite: opts.overwrite });
+    if (!commit.changed) console.log(`[done]   unchanged — kept existing snapshot at ${outDir}`);
+    else if (commit.archivedTo) console.log(`[done]   ${outDir}/index.html (previous archived to ${commit.archivedTo})`);
+    else console.log(`[done]   ${outDir}/index.html`);
+    return outDir;
+  } catch (err) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw err;
+  }
 }
 
 // Run as a CLI only when invoked directly (not when imported by the evals).
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const url = process.argv[2];
+  const args = process.argv.slice(2);
+  const overwrite = args.includes("--overwrite");
+  const [url, outDir] = args.filter((a) => !a.startsWith("--"));
   if (!url) {
-    console.error("usage: pnpm agent <url> [outDir]");
+    console.error("usage: pnpm agent [--overwrite] <url> [outDir]");
     process.exit(2);
   }
-  runAgent(url, process.argv[3] ?? "archives").catch((err) => {
+  runAgent(url, outDir ?? "archives", "claude-sonnet-4-6", { overwrite }).catch((err) => {
     console.error(err?.stack ?? err);
     process.exit(1);
   });

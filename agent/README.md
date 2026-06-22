@@ -21,7 +21,11 @@ pnpm install
 pnpm exec playwright install chromium
 export ANTHROPIC_API_KEY=...
 pnpm agent https://example.com/some-post   # writes ./archives/<slug>/
+pnpm agent --overwrite https://example.com/some-post   # replace latest, keep no history
 ```
+
+Like the pipeline, re-archiving keeps history: the previous capture rotates into
+`<slug>/versions/<timestamp>/` and an unchanged re-capture is skipped.
 
 You'll see the loop narrate itself:
 

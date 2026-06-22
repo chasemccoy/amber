@@ -58,20 +58,33 @@ Two entry points share the same capture/clean code:
 ## Output layout
 
 `<outRoot>/<slug>/` — slug is `host` (with leading `www.` stripped) + `pathname`,
-sanitised, ≤80 chars (`slugifyUrl`). Re-archiving the same URL overwrites. Default
-`outRoot` is `~/Documents/Archives` (CLI `-o` / `AMBER_ARCHIVE_DIR` override it);
-the CLI and the extension's native host share this default.
+sanitised, ≤80 chars (`slugifyUrl`). Default `outRoot` is `~/Documents/Archives`
+(CLI `-o` / `AMBER_ARCHIVE_DIR` override it); the CLI and the extension's native
+host share this default.
 
 ```
 <outRoot>/<slug>/
 ├── index.html       # cleaned, faithful to the original (no injected provenance)
 ├── assets/{images,static,media}/
 ├── plan.json        # the applied judgement (pipeline only)
-└── manifest.json    # source/final URL, capturedAt, backend, topical tags, asset list, errors, cleanReport
+├── manifest.json    # source/final URL, capturedAt, contentHash, backend, tags, asset list, errors, cleanReport
+└── versions/        # older snapshots, each a full self-contained archive
+    └── <YYYYMMDDTHHMMSSZ>/   # named from that snapshot's capturedAt (second precision)
 ```
 
 Asset filenames are `<basename>-<8-char sha1 of full URL><ext>` (`slugFor`), so
 distinct URLs never collide and the same URL is downloaded once (cached).
+
+**Versioning** (`src/snapshot.ts`). Every archive is built in a `.amber-tmp-*`
+staging dir under `outRoot`, then `commitSnapshot()` promotes it: the newest
+snapshot lives at the slug root (so `<slug>/index.html` is always latest and the
+extension/library see no layout change), and the previous latest rotates into
+`versions/<capturedAt>/`. The set of folders *is* the history — there is no index
+file; derive the timeline by reading each snapshot's `manifest.json`. Re-archiving
+identical content is skipped (compared via `manifest.contentHash`, a sha256 of
+`index.html` + asset bytes that ignores `manifest.json`/`plan.json`). `--overwrite`
+replaces the latest in place without rotating it into `versions/`. Both entry
+points share this: the pipeline via `finishArchive()`, the agent via `runAgent()`.
 
 ## Conventions & gotchas
 
