@@ -29,7 +29,7 @@ import { normalizeTags } from "../src/planner.js";
 import { slugifyUrl } from "../src/pipeline.js";
 import { commitSnapshot, hashSnapshotContent } from "../src/snapshot.js";
 
-interface Ctx {
+export interface Ctx {
   url: string;
   outDir: string;
   $: CheerioAPI;
@@ -42,7 +42,7 @@ interface Ctx {
 }
 
 /** Compact structural view so we don't ship the whole HTML every turn. */
-function domOutline($: CheerioAPI, limit = 120): string {
+export function domOutline($: CheerioAPI, limit = 120): string {
   const skip = new Set(["p", "span", "a", "li", "br", "b", "i", "em", "strong", "code"]);
   const lines: string[] = [];
   const all = $("*").toArray();
@@ -62,7 +62,7 @@ function domOutline($: CheerioAPI, limit = 120): string {
 }
 
 /** Build the tool set bound to one run's context (no shared global state). */
-function buildTools(ctx: Ctx) {
+export function buildTools(ctx: Ctx) {
   return [
   betaZodTool({
     name: "get_dom_outline",

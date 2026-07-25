@@ -47,6 +47,7 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
+    "test:coverage": "node --import tsx --experimental-test-coverage --test test/*.test.ts",
     "evals": "vitest run --config vitest.evals.config.ts",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
   },
