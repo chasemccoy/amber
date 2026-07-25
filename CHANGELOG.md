@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0 — 2026-07-25
+
+- **Requires Node ≥ 24** (the current LTS). Node 20 reached end-of-life in
+  April 2026; nothing else changed, but installs on older Nodes now warn.
+
 ## 0.3.0 — 2026-07-25
 
 First installable release.

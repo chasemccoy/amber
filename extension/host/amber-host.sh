@@ -18,9 +18,9 @@ if [ -f "$DIR/host.env" ]; then
   set +a
 fi
 
-# amber needs Node >= 20 (undici 7). The bare PATH Chrome hands us often resolves
+# amber needs Node >= 24. The bare PATH Chrome hands us often resolves
 # to an old default (e.g. an nvm shim), so pick a good Node explicitly.
-is_node20() { "$1" -e 'process.exit(+process.versions.node.split(".")[0]>=20?0:1)' >/dev/null 2>&1; }
+is_node24() { "$1" -e 'process.exit(+process.versions.node.split(".")[0]>=24?0:1)' >/dev/null 2>&1; }
 pick_node() {
   local c
   for c in \
@@ -29,14 +29,14 @@ pick_node() {
     /usr/local/bin/node \
     "$HOME"/.nvm/versions/node/*/bin/node \
     "$(command -v node 2>/dev/null || true)"; do
-    [ -n "$c" ] && [ -x "$c" ] && is_node20 "$c" && { echo "$c"; return 0; }
+    [ -n "$c" ] && [ -x "$c" ] && is_node24 "$c" && { echo "$c"; return 0; }
   done
   return 1
 }
 
 NODE_BIN="$(pick_node || true)"
 if [ -z "$NODE_BIN" ]; then
-  echo "amber host: no Node >= 20 found. Set AMBER_NODE in host.env." >&2
+  echo "amber host: no Node >= 24 found. Set AMBER_NODE in host.env." >&2
   exit 1
 fi
 

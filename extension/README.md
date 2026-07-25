@@ -13,7 +13,7 @@ extension/
 ├── icons/               # generated amber icons
 └── host/
     ├── amber-host.ts    # native-messaging host: frames stdin/stdout, calls archiveFromDom()
-    ├── amber-host.sh    # launcher Chrome executes (picks Node ≥ 20, loads host.env)
+    ├── amber-host.sh    # launcher Chrome executes (picks Node ≥ 24, loads host.env)
     ├── install.sh       # registers the host manifest with installed browsers
     ├── host.env.example # copy to host.env and add your ANTHROPIC_API_KEY
     └── key.pem          # the extension's private identity (git-ignored)
@@ -37,7 +37,7 @@ Archives land in `~/Documents/Archives/<slug>/` by default (set
 
 ## Setup (once)
 
-Prerequisites: `pnpm install` in the repo, **Node ≥ 20** available (the launcher
+Prerequisites: `pnpm install` in the repo, **Node ≥ 24** available (the launcher
 finds Homebrew/nvm Node automatically; or set `AMBER_NODE` in `host.env`), and
 `yt-dlp` on PATH for embedded media.
 

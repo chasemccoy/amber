@@ -29,9 +29,9 @@ function commandVersion(cmd: string): string | null {
 
 function checkNode(): Check {
   const major = Number(process.versions.node.split(".")[0]);
-  return major >= 20
+  return major >= 24
     ? { status: "ok", summary: `Node ${process.versions.node}` }
-    : { status: "fail", summary: `Node ${process.versions.node} — amber needs Node ≥ 20` };
+    : { status: "fail", summary: `Node ${process.versions.node} — amber needs Node ≥ 24` };
 }
 
 function checkApiKey(): Check {
