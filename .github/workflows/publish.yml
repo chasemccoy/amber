@@ -5,10 +5,12 @@ name: Publish
 #
 # Auth is npm "trusted publishing" (OIDC): the in-amber package's npm settings
 # name this repo + workflow as a trusted publisher, so no token or secret is
-# involved and provenance is attached automatically. `id-token: write` is what
-# lets the job mint the OIDC credential. First-time setup happens on npmjs.com
-# (package → Settings → Trusted Publisher); the very first version must be
-# published locally since that page only exists once the package does.
+# involved. `id-token: write` is what lets the job mint the OIDC credential;
+# provenance comes from publishConfig in package.json and requires the repo to
+# stay public. First-time setup happens on npmjs.com (package → Settings →
+# Trusted Publisher); the very first version had to be published locally since
+# that page only exists once the package does. A matching GitHub release is
+# created after the npm publish succeeds.
 
 on:
   push:
@@ -18,7 +20,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # checkout + creating the GitHub release
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -34,3 +36,7 @@ jobs:
       # prepublishOnly runs typecheck + test + build before the tarball is made.
       # access + provenance come from publishConfig in package.json.
       - run: npm publish
+      # Mirror the release on GitHub's Releases tab
+      - run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --latest
+        env:
+          GH_TOKEN: ${{ github.token }}
