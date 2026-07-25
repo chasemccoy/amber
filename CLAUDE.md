@@ -100,6 +100,12 @@ it's missing, `auto` mode degrades to the static capture, and `amber doctor`
 (src/doctor.ts) reports key/Playwright/yt-dlp/ffmpeg/output-dir status. The CLI
 prints `AmberError`s message-only; other errors keep their stack.
 
+**Releases** are tag pushes: bump `version`, commit, `git tag vX.Y.Z`,
+`git push --follow-tags`. `.github/workflows/publish.yml` publishes via npm
+trusted publishing (OIDC — no token secret) with provenance; local
+`npm/pnpm publish` intentionally fails (`publishConfig.provenance` needs CI),
+and provenance requires the GitHub repo to stay public. Requires Node ≥ 24.
+
 ## Conventions & gotchas
 
 - TypeScript ESM, `.js` extensions in imports (NodeNext). `tsx` runs the source
