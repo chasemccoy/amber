@@ -1,32 +1,68 @@
 {
-  "name": "amber",
-  "version": "0.2.0",
-  "description": "Turn a URL into a self-contained, de-junked offline folder — deterministic capture, judgement by Claude.",
+  "name": "in-amber",
+  "version": "0.3.0",
+  "description": "Save any web page as a clean, self-contained offline folder — deterministic capture, judgement by Claude.",
   "license": "MIT",
   "author": "Chase McCoy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chasemccoy/amber.git"
+  },
+  "homepage": "https://github.com/chasemccoy/amber#readme",
+  "bugs": "https://github.com/chasemccoy/amber/issues",
+  "keywords": [
+    "archive",
+    "web-archiving",
+    "offline",
+    "readability",
+    "scraper",
+    "claude",
+    "yt-dlp"
+  ],
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "bin": {
-    "amber": "src/cli.ts"
+    "amber": "bin/amber.js"
   },
+  "files": [
+    "bin",
+    "dist"
+  ],
   "scripts": {
     "archive": "tsx src/cli.ts",
     "agent": "tsx agent/agent.ts",
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
-    "evals": "vitest run --config vitest.evals.config.ts"
+    "evals": "vitest run --config vitest.evals.config.ts",
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.2",
     "cheerio": "^1.0.0",
-    "playwright": "^1.49.0",
     "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "playwright": "^1.49.0"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "domhandler": "^6.0.1",
+    "playwright": "^1.49.0",
+    "tsup": "^8.5.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.9",

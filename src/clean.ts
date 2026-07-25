@@ -1,6 +1,7 @@
 /** Apply a CleanupPlan to captured HTML: swap media, delete junk, add provenance. */
 
-import type { CheerioAPI } from "cheerio";
+import type { Cheerio, CheerioAPI } from "cheerio";
+import type { AnyNode } from "domhandler";
 import { downloadMedia, mediaElementHtml, type MediaResult } from "./media.js";
 import type { CleanupPlan } from "./types.js";
 
@@ -87,7 +88,7 @@ export async function applyPlan(
  * simple `#id` / `.class` selector fails to parse, retry as an attribute
  * selector (`[id="…"]` / `[class~="…"]`), which has no such restriction.
  */
-export function selectTolerant($: CheerioAPI, sel: string) {
+export function selectTolerant($: CheerioAPI, sel: string): Cheerio<AnyNode> {
   try {
     return $(sel);
   } catch (err) {
