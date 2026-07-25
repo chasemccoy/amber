@@ -7,6 +7,8 @@
  * cookie-gated, etc.).
  */
 
+import { AmberError } from "./errors.js";
+
 export const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -52,10 +54,29 @@ async function autoScroll(page: import("playwright").Page): Promise<void> {
   });
 }
 
+/**
+ * Load Playwright, which is an optional peer dependency: static-only installs
+ * skip its ~300 MB of browser + driver entirely. Missing module → an error that
+ * says how to opt in.
+ */
+async function loadChromium(): Promise<typeof import("playwright").chromium> {
+  try {
+    return (await import("playwright")).chromium;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== "ERR_MODULE_NOT_FOUND" && code !== "MODULE_NOT_FOUND") throw err;
+    throw new AmberError(
+      "this page needs a headless-browser render, but Playwright isn't installed.\n" +
+        "  Install it:  npm install -g playwright && playwright install chromium\n" +
+        "  Or force a browserless capture with --static",
+    );
+  }
+}
+
 export async function renderPage(url: string, opts: RenderOptions): Promise<RenderResult> {
   // Imported lazily so consumers that never render (e.g. a server doing only
   // static fetches) don't load Playwright at startup.
-  const { chromium } = await import("playwright");
+  const chromium = await loadChromium();
   const browser = await chromium.launch();
   try {
     const context = await browser.newContext({

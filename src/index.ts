@@ -4,6 +4,7 @@
  */
 
 export { archiveUrl, archiveFromDom, slugifyUrl, defaultArchiveDir } from "./pipeline.js";
+export { AmberError } from "./errors.js";
 export type { ArchiveOptions, ArchiveResult, DomCapture, DomArchiveOptions } from "./pipeline.js";
 export type { CleanupPlan, MediaEmbed, Asset, CaptureOptions } from "./types.js";
 export type { CleanReport } from "./clean.js";

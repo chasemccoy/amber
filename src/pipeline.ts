@@ -133,7 +133,8 @@ export async function archiveUrl(url: string, opts: ArchiveOptions): Promise<Arc
           // If the static fetch also failed we have nothing to package — surface
           // the render error rather than continuing with an empty capture.
           if (!cap.$) throw err;
-          log(`      browser render unavailable (${err}); keeping the static capture`);
+          const why = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+          log(`      browser render unavailable (${why}); keeping the static capture`);
         }
       }
     }
@@ -219,7 +220,7 @@ async function finishArchive(
     log(`[3/4] Loading cleanup plan from ${opts.planPath}`);
     plan = parsePlan(JSON.parse(fs.readFileSync(opts.planPath, "utf8")));
   } else if (opts.useLLM && !process.env.ANTHROPIC_API_KEY) {
-    log("[3/4] No ANTHROPIC_API_KEY set — using the heuristic plan");
+    log("[3/4] No ANTHROPIC_API_KEY set — using the heuristic plan (set a key for Claude-judged cleaning)");
     plan = heuristicPlan(cap.$);
   } else if (opts.useLLM) {
     log("[3/4] Asking Claude for a cleanup plan");
