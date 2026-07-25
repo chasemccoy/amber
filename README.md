@@ -1,5 +1,8 @@
 # amber
 
+[![CI](https://github.com/chasemccoy/amber/actions/workflows/ci.yml/badge.svg)](https://github.com/chasemccoy/amber/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/in-amber)](https://www.npmjs.com/package/in-amber)
+
 > Save any web page as a clean, self-contained offline copy — one folder, no junk, no callbacks to the live web.
 
 amber turns a URL into a folder you own: a single `index.html` with every image,
@@ -26,17 +29,28 @@ embed is a video worth keeping?* — is handled by Claude and written out as a
 ## Quick start
 
 ```bash
-pnpm install
-pnpm exec playwright install chromium   # one-time, for the headless-render backend
-export ANTHROPIC_API_KEY=...            # optional — falls back to heuristics without it
+npm install -g in-amber
+export ANTHROPIC_API_KEY=...   # optional — falls back to heuristics without it
 
-pnpm archive https://example.com/some-post
+amber https://example.com/some-post
 ```
 
+(Or without installing: `npx in-amber <url>`.)
+
 Archives land in `~/Documents/Archives/<slug>/` by default (override with `-o`
-or `AMBER_ARCHIVE_DIR`). For media downloads, `yt-dlp` must be on your `PATH`
-(`brew install yt-dlp` or `pipx install yt-dlp`); `ffmpeg` is optional, for
-muxing separate video+audio streams.
+or `AMBER_ARCHIVE_DIR`). Run `amber doctor` to see what your setup can do — every
+optional piece degrades gracefully:
+
+- **`ANTHROPIC_API_KEY`** — without it, cleanup uses heuristics instead of
+  Claude's judgement. With it, you pay per archive on your own key: typically a
+  few cents per page (one planning call; the HTML sent is capped at 400k
+  characters, so even a huge page tops out around $0.30).
+- **Playwright** — only needed for JS-rendered pages; without it, amber captures
+  what a plain fetch can see. Opt in with
+  `npm install -g playwright && playwright install chromium`.
+- **`yt-dlp`** — needed to download embedded media
+  (`brew install yt-dlp` or `pipx install yt-dlp`); `ffmpeg` is optional, for
+  muxing separate video+audio streams.
 
 ## Usage
 
@@ -45,13 +59,14 @@ headless render only if the page looks client-rendered, and uses Claude when a
 key is set. The flags below only *force* a choice.
 
 ```bash
-pnpm archive <url>                     # auto capture + Claude if a key is set
-pnpm archive --no-llm     <url>        # heuristics only, never call the model
-pnpm archive --static     <url>        # force a plain HTTP fetch (never boot Chromium)
-pnpm archive --playwright <url>        # force a headless-Chromium render
-pnpm archive --plan plan.json <url>    # replay or audit a saved plan
-pnpm archive --overwrite      <url>    # replace the latest snapshot, keep no history
-pnpm archive -o ~/somewhere   <url>    # choose the output directory
+amber <url>                     # auto capture + Claude if a key is set
+amber --no-llm     <url>        # heuristics only, never call the model
+amber --static     <url>        # force a plain HTTP fetch (never boot Chromium)
+amber --playwright <url>        # force a headless-Chromium render
+amber --plan plan.json <url>    # replay or audit a saved plan
+amber --overwrite      <url>    # replace the latest snapshot, keep no history
+amber -o ~/somewhere   <url>    # choose the output directory
+amber doctor                    # check the environment: key, Playwright, yt-dlp, ffmpeg
 ```
 
 **Browser extension** — to archive the page you're already looking at, the
@@ -59,8 +74,8 @@ Chrome/Chromium extension sends the active tab's rendered DOM to a local amber
 host (no headless browser needed — your tab *is* the capture). Setup is in
 [`extension/README.md`](extension/README.md).
 
-**Agent mode** — for awkward pages, `pnpm agent <url>` runs Claude as an
-interactive loop: it inspects the DOM, removes junk, handles media, and finalises
+**Agent mode** — for awkward pages, `pnpm agent <url>` (from a repo checkout)
+runs Claude as an interactive loop: it inspects the DOM, removes junk, handles media, and finalises
 by calling real tools step by step. Best on a machine you own, where it has
 direct network egress and your browser's cookies for yt-dlp. See
 [`agent/README.md`](agent/README.md).
@@ -129,9 +144,15 @@ human would otherwise do by hand, one page at a time.
 ## Development
 
 ```bash
-pnpm test        # deterministic unit tests — no key, no network, no browser
-pnpm typecheck   # tsc --noEmit
-pnpm evals       # judgement suite (see evals/README.md)
+git clone https://github.com/chasemccoy/amber && cd amber
+pnpm install
+pnpm exec playwright install chromium   # one-time, for the headless-render backend
+
+pnpm archive <url>   # run the CLI from source (tsx, no build step)
+pnpm test            # deterministic unit tests — no key, no network, no browser
+pnpm typecheck       # tsc --noEmit
+pnpm evals           # judgement suite (see evals/README.md)
+pnpm build           # tsup → dist/ (what npm installs; bin/amber.js wraps dist/cli.js)
 ```
 
 The [`vitest-evals`](https://vitest-evals.sentry.dev) suite scores the

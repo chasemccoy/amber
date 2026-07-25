@@ -23,6 +23,7 @@ pnpm agent <url>       # local agentic loop (agent/agent.ts) — Claude drives t
 pnpm test              # deterministic unit tests — no key, no network, no browser
 pnpm typecheck         # tsc --noEmit
 pnpm evals             # vitest-evals judgement suite (LLM/agent suites need a key)
+pnpm build             # tsup → dist/ (only needed for publishing; dev runs tsx directly)
 ```
 
 Always run `pnpm typecheck` and `pnpm test` after changing `src/`. After
@@ -85,6 +86,19 @@ identical content is skipped (compared via `manifest.contentHash`, a sha256 of
 `index.html` + asset bytes that ignores `manifest.json`/`plan.json`). `--overwrite`
 replaces the latest in place without rotating it into `versions/`. Both entry
 points share this: the pipeline via `finishArchive()`, the agent via `runAgent()`.
+
+## Packaging (npm)
+
+Published as **`in-amber`**; the installed command is **`amber`**
+(`bin/amber.js`, a `#!/usr/bin/env node` wrapper that imports `dist/cli.js`).
+`pnpm build` (tsup) bundles `src/cli.ts` + `src/index.ts` into `dist/` with a
+rolled-up `dist/index.d.ts`; `prepublishOnly` runs typecheck + test + build.
+Only `bin/` and `dist/` ship. **Playwright is an optional peer dependency** —
+kept in devDependencies for repo work, but a plain `npm i -g in-amber` skips it;
+`render.ts` `loadChromium()` throws a friendly `AmberError` (src/errors.ts) when
+it's missing, `auto` mode degrades to the static capture, and `amber doctor`
+(src/doctor.ts) reports key/Playwright/yt-dlp/ffmpeg/output-dir status. The CLI
+prints `AmberError`s message-only; other errors keep their stack.
 
 ## Conventions & gotchas
 

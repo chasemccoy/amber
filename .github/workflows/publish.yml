@@ -1,0 +1,35 @@
+name: Publish
+
+# Publishes to npm when a version tag is pushed:
+#   git tag v0.4.0 && git push --follow-tags
+#
+# Auth is npm "trusted publishing" (OIDC): the in-amber package's npm settings
+# name this repo + workflow as a trusted publisher, so no token or secret is
+# involved and provenance is attached automatically. `id-token: write` is what
+# lets the job mint the OIDC credential. First-time setup happens on npmjs.com
+# (package → Settings → Trusted Publisher); the very first version must be
+# published locally since that page only exists once the package does.
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs a newer npm than Node 22 bundles
+      - run: npm install -g npm@latest
+      - run: pnpm install --frozen-lockfile
+      # prepublishOnly runs typecheck + test + build before the tarball is made
+      - run: npm publish --access public
