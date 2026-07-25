@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1 — 2026-07-25
+
+- Publishes now carry an npm **provenance attestation** — the npm page shows
+  "Built and signed on GitHub Actions" linking to the exact source commit.
+  Declared in `publishConfig`, so it's attached on every future release.
+
 ## 0.4.0 — 2026-07-25
 
 - **Requires Node ≥ 24** (the current LTS). Node 20 reached end-of-life in
