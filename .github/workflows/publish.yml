@@ -24,6 +24,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the release step can find the previous tag
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -36,7 +38,19 @@ jobs:
       # prepublishOnly runs typecheck + test + build before the tarball is made.
       # access + provenance come from publishConfig in package.json.
       - run: npm publish
-      # Mirror the release on GitHub's Releases tab
-      - run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --latest
+      # Mirror the release on GitHub's Releases tab, with notes from the
+      # version's CHANGELOG.md section (--generate-notes only works from merged
+      # PRs, which a direct-push repo doesn't have).
+      - run: |
+          VER="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VER" '$0 ~ "^## " ver "( |$)" {f=1; next} /^## / {f=0} f' CHANGELOG.md > /tmp/notes.md
+          if ! grep -q '[^[:space:]]' /tmp/notes.md; then
+            echo "_No CHANGELOG.md entry for $VER._" > /tmp/notes.md
+          fi
+          PREV=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME"^ 2>/dev/null || true)
+          if [ -n "$PREV" ]; then
+            printf '\n**Full changelog**: https://github.com/%s/compare/%s...%s\n' "$GITHUB_REPOSITORY" "$PREV" "$GITHUB_REF_NAME" >> /tmp/notes.md
+          fi
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file /tmp/notes.md --latest
         env:
           GH_TOKEN: ${{ github.token }}
