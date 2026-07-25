@@ -31,5 +31,6 @@ jobs:
       # Trusted publishing needs a newer npm than Node 24 bundles
       - run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
-      # prepublishOnly runs typecheck + test + build before the tarball is made
-      - run: npm publish --access public
+      # prepublishOnly runs typecheck + test + build before the tarball is made.
+      # access + provenance come from publishConfig in package.json.
+      - run: npm publish
