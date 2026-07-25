@@ -10,7 +10,8 @@
  * step via the Anthropic SDK tool runner.
  *
  *   export ANTHROPIC_API_KEY=...
- *   pnpm agent https://example.com/some-post
+ *   pnpm agent https://example.com/some-post     # from a repo checkout
+ *   amber agent https://example.com/some-post    # from the npm install (src/cli.ts)
  */
 
 import * as fs from "node:fs";

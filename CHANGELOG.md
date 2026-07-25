@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0 — 2026-07-25
+
+- **New `amber agent <url>`** — the escalation path for pages the one-shot
+  pipeline gets wrong: Claude cleans the page interactively (outline, inspect,
+  remove, swap media, finalize) instead of returning a single plan. Previously
+  repo-checkout-only; now in the npm package. Needs `ANTHROPIC_API_KEY` and
+  Playwright; costs more (many model calls). `amber agent --help` for details.
+- **`amber --help` and `--version` now exist.** Both previously crashed with a
+  stack trace; unknown flags now print the message plus usage instead.
+- The CLI honors **`AMBER_MODEL`** as the default for `--model`.
+- README: documented the wrong-archive escalation ladder (read `plan.json` →
+  edit + `--plan` replay → `amber agent`) and added a sample run.
+
 ## 0.4.1 — 2026-07-25
 
 - Publishes now carry an npm **provenance attestation** — the npm page shows

@@ -8,6 +8,7 @@
  *   amber --playwright https://example.com/post    # force a headless-Chromium render
  *   amber --plan plan.json https://example.com/post
  *   amber --overwrite https://example.com/post     # replace the latest, keep no history
+ *   amber agent https://example.com/post           # Claude cleans interactively (hard pages)
  *   amber doctor                                   # check the environment
  *
  * Re-archiving a URL keeps history: the previous capture rotates into
@@ -23,6 +24,7 @@ import { AmberError } from "./errors.js";
 
 const USAGE =
   "usage: amber [options] <url>\n" +
+  "       amber agent [options] <url>\n" +
   "       amber doctor";
 
 const HELP = `amber — save a web page as a clean, self-contained offline folder
@@ -43,12 +45,77 @@ options:
   -h, --help         show this help
   --version          print the version
 
+subcommands:
+  agent <url>        Claude cleans the page interactively with tools instead of
+                     one planning call — for pages the pipeline gets wrong.
+                     Needs a key + Playwright; costs more (amber agent --help)
+  doctor             check the environment: key, Playwright, yt-dlp, ffmpeg
+
 Re-archiving a URL keeps history: the previous capture rotates into
 <slug>/versions/<timestamp>/ and the newest stays at <slug>/. Identical
 re-captures are skipped. Run \`amber doctor\` to check your setup.`;
 
+const AGENT_HELP = `amber agent — archive a page with Claude working interactively
+
+usage: amber agent [options] <url>
+
+Instead of the pipeline's single planning call, Claude drives real tools in a
+loop — outline the DOM, inspect ambiguous elements, remove junk, download and
+swap embedded media, finalize. Slower and costlier (many model calls instead of
+one), but it can handle pages the one-shot plan mangles. Requires
+ANTHROPIC_API_KEY (no heuristic fallback) and Playwright (the page is always
+rendered in headless Chromium).
+
+options:
+  -o, --out <dir>    output directory (default ~/Documents/Archives, or $AMBER_ARCHIVE_DIR)
+  --model <id>       model to use (default claude-sonnet-4-6, or $AMBER_MODEL)
+  --overwrite        replace the latest snapshot in place; keep no history
+  -h, --help         show this help`;
+
+/** `amber agent <url>` — the interactive-judgement escalation path. */
+async function runAgentCli(args: string[]): Promise<number> {
+  let values, positionals;
+  try {
+    ({ values, positionals } = parseArgs({
+      args,
+      allowPositionals: true,
+      options: {
+        out: { type: "string", short: "o", default: defaultArchiveDir() },
+        model: { type: "string", default: process.env.AMBER_MODEL || "claude-sonnet-4-6" },
+        overwrite: { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+    }));
+  } catch (err) {
+    console.error(`error: ${(err as Error).message}\n\nusage: amber agent [options] <url>`);
+    return 2;
+  }
+
+  if (values.help) {
+    console.log(AGENT_HELP);
+    return 0;
+  }
+  const url = positionals[0];
+  if (!url) {
+    console.error("usage: amber agent [options] <url>\n\nRun \`amber agent --help\` for details.");
+    return 2;
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new AmberError(
+      "agent mode needs ANTHROPIC_API_KEY — Claude drives the cleanup interactively, there is no heuristic fallback.\n" +
+        "  For a no-key archive, use: amber --no-llm " + url,
+    );
+  }
+
+  // Lazy import: plain archives never load the agent (or the SDK tool runner).
+  const { runAgent } = await import("../agent/agent.js");
+  await runAgent(url, values.out!, values.model!, { overwrite: values.overwrite });
+  return 0;
+}
+
 async function main(): Promise<number> {
   if (process.argv[2] === "doctor") return runDoctor();
+  if (process.argv[2] === "agent") return runAgentCli(process.argv.slice(3));
 
   let values, positionals;
   try {

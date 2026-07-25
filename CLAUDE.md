@@ -49,12 +49,15 @@ Two entry points share the same capture/clean code:
      selector, then *unconditionally* strips `<script>`/`<noscript>`/preconnect &
      dns-prefetch hints, `on*` handlers, and `javascript:` hrefs.
   4. **Package** — writes `index.html`, `plan.json`, `manifest.json`.
-- **Agent** (`pnpm agent`) — `agent/agent.ts` `runAgentLoop()`, a
-  `beta.messages.toolRunner` loop with 7 tools (get_dom_outline, inspect,
-  list_embeds, remove, download_and_swap, set_main_content, finalize). For
-  awkward pages where the model benefits from looking closer. Runs on a machine
-  you own (direct egress, browser cookies for yt-dlp). Writes a leaner manifest
-  and no `plan.json`.
+- **Agent** (`pnpm agent`, or `amber agent` from the npm install — src/cli.ts
+  lazy-imports `agent/agent.js` so plain archives never load the SDK tool
+  runner) — `agent/agent.ts` `runAgentLoop()`, a `beta.messages.toolRunner`
+  loop with 7 tools (get_dom_outline, inspect, list_embeds, remove,
+  download_and_swap, set_main_content, finalize). For awkward pages where the
+  model benefits from looking closer. Requires a key (no heuristic fallback)
+  and always renders with Playwright. Runs on a machine you own (direct
+  egress, browser cookies for yt-dlp). Writes a leaner manifest and no
+  `plan.json`.
 
 ## Output layout
 

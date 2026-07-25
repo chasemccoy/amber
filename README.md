@@ -25,6 +25,7 @@ embed is a video worth keeping?* — is handled by Claude and written out as a
 - 🏷️ **Auto-tagged** — Claude reads the page and adds topical tags to the manifest for later browsing and search.
 - 🌐 **Handles JS-rendered pages** — headless Chromium (Playwright) capture, used only when a page actually needs it.
 - 🖱️ **One-click browser extension** — archive the tab you're looking at, using your own session. See [`extension/`](extension/README.md).
+- 🕵️ **An escalation path for stubborn pages** — `amber agent` has Claude clean the page interactively, tool call by tool call, when the one-shot plan isn't enough.
 
 ## Quick start
 
@@ -36,6 +37,22 @@ amber https://example.com/some-post
 ```
 
 (Or without installing: `npx in-amber <url>`.)
+
+A run narrates every decision it makes — nothing is interactive, everything is
+overridable next time:
+
+```
+[1/4] Fetching https://example.com/some-post (static probe)
+      2841 chars of visible text — static capture is enough
+[2/4] Downloading assets and rewriting references
+      37 assets, 0 errors
+[3/4] Asking Claude for a cleanup plan
+[4/4] Applying plan (removing junk, downloading embedded media)
+      removed 12 elements; 1 media item(s)
+
+Archive written to: ~/Documents/Archives/example.com-some-post/
+  open ~/Documents/Archives/example.com-some-post/index.html
+```
 
 Archives land in `~/Documents/Archives/<slug>/` by default (override with `-o`
 or `AMBER_ARCHIVE_DIR`). Run `amber doctor` to see what your setup can do — every
@@ -66,6 +83,7 @@ amber --playwright <url>        # force a headless-Chromium render
 amber --plan plan.json <url>    # replay or audit a saved plan
 amber --overwrite      <url>    # replace the latest snapshot, keep no history
 amber -o ~/somewhere   <url>    # choose the output directory
+amber agent            <url>    # Claude cleans interactively — for pages the pipeline gets wrong
 amber doctor                    # check the environment: key, Playwright, yt-dlp, ffmpeg
 ```
 
@@ -74,11 +92,29 @@ Chrome/Chromium extension sends the active tab's rendered DOM to a local amber
 host (no headless browser needed — your tab *is* the capture). Setup is in
 [`extension/README.md`](extension/README.md).
 
-**Agent mode** — for awkward pages, `pnpm agent <url>` (from a repo checkout)
-runs Claude as an interactive loop: it inspects the DOM, removes junk, handles media, and finalises
-by calling real tools step by step. Best on a machine you own, where it has
-direct network egress and your browser's cookies for yt-dlp. See
-[`agent/README.md`](agent/README.md).
+## When an archive comes out wrong
+
+The cleanup is judgement, and judgement sometimes misses. amber's answer is an
+escalation ladder — each step trades more time and cost for more care:
+
+1. **Read the judgement.** `plan.json` in the archive folder is the complete
+   plan that was applied: what was removed, what was kept, which embeds were
+   treated as real media.
+2. **Edit it and replay.** Delete the selector that ate your sidebar — or add
+   one for the popup that survived — then re-run with
+   `amber --plan plan.json <url>`. Deterministic and free; no model involved.
+3. **Escalate to the agent.** `amber agent <url>` swaps the single planning
+   call for Claude working the page interactively: outline the DOM, inspect
+   anything ambiguous, remove junk step by step, download media, finalize.
+   Slower and costlier (many model calls instead of one), but it handles pages
+   the one-shot plan mangles. Needs `ANTHROPIC_API_KEY` (no heuristic fallback)
+   and Playwright; best on a machine you own, where it has direct network
+   egress and your browser's cookies for yt-dlp. Details in
+   [`agent/README.md`](agent/README.md).
+
+Nothing ever asks a question mid-run: amber decides, tells you what it decided,
+and every decision can be overridden on the next run — with a flag, an edited
+plan, or the agent.
 
 ## What you get
 
