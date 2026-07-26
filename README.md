@@ -1,7 +1,4 @@
-# amber
-
-[![CI](https://github.com/chasemccoy/amber/actions/workflows/ci.yml/badge.svg)](https://github.com/chasemccoy/amber/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/in-amber)](https://www.npmjs.com/package/in-amber)
+# <img src=".github/assets/amber-mark.svg" alt="" width="40" valign="middle"> Amber
 
 > Save any web page as a clean, self-contained offline copy — one folder, no junk, no callbacks to the live web.
 
