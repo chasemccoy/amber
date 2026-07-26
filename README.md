@@ -1,10 +1,14 @@
-<h1 align="center">
-  <img src=".github/assets/amber-mark.svg" alt="" width="40" valign="middle">&nbsp;&nbsp;Amber
-</h1>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/amber-lockup-dark.svg">
+    <img src=".github/assets/amber-lockup-light.svg" alt="Amber" height="48">
+  </picture>
+</p>
 
 <p align="center">Save any web page as a clean, self-contained offline copy — one folder, no junk, no callbacks to the live web.</p>
 
-amber turns a URL into a folder you own: a single `index.html` with every image,
+Amber turns a URL into a folder you own: a single `index.html` with every image,
+
 stylesheet, font, and video pulled local, and the clutter — ads, cookie banners,
 trackers, newsletter popups, analytics scripts — stripped away. Open it in ten
 years with the network unplugged and it still just works.
