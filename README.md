@@ -5,7 +5,9 @@
   </picture>
 </p>
 
-<p align="center">Save any web page as a clean, self-contained offline copy — one folder, no junk, no callbacks to the live web.</p>
+<p align="center">Save any web page as a clean, self-contained offline copy —<br>one folder, no junk, no callbacks to the live web.</p>
+
+<hr />
 
 Amber turns a URL into a folder you own: a single `index.html` with every image,
 
