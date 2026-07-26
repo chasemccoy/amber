@@ -1,4 +1,7 @@
-# <img src=".github/assets/amber-mark.svg" alt="" width="40" valign="middle"> Amber
+<h1 align="center">
+  <img src=".github/assets/amber-mark.svg" alt="" width="40" valign="middle">
+  Amber
+</h1>
 
 > Save any web page as a clean, self-contained offline copy — one folder, no junk, no callbacks to the live web.
 
