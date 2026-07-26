@@ -35,19 +35,23 @@ needs `ANTHROPIC_API_KEY`).
 Two entry points share the same capture/clean code:
 
 - **Pipeline** (`pnpm archive`) — one structured-output call returns a plan that
-  the pipeline applies. Stages in `src/pipeline.ts` `archiveUrl()`:
+  the pipeline applies. Stages in `src/pipeline.ts` `archiveUrl()`/`finishArchive()`:
   1. **Capture** — `src/render.ts` (Playwright) + `src/capture.ts`. Backend is
      `auto` by default: static `fetch` first, escalating to a headless-Chromium
      render only when the page looks client-rendered (`assessRendering`).
-     `captureAssets()` walks the DOM, downloads every referenced asset (incl.
-     `url()` in `<style>` blocks and `.css` files), and rewrites refs to
-     **relative local paths**. `<a href>` links and `<iframe src>` are left alone;
-     `<script src>` is not localised (scripts are stripped in clean).
-  2. **Plan** — `src/planner.ts`. `llmPlan()` uses `messages.parse` + a Zod
-     schema; `heuristicPlan()` is the no-key fallback.
-  3. **Clean** — `src/clean.ts` `applyPlan()`. Swaps media first, removes junk by
-     selector, then *unconditionally* strips `<script>`/`<noscript>`/preconnect &
-     dns-prefetch hints, `on*` handlers, and `javascript:` hrefs.
+  2. **Plan** — `src/planner.ts`. `llmPlan()` judges the *raw pre-capture* HTML
+     (`messages.parse` + a Zod schema); `heuristicPlan()` is the no-key fallback.
+  3. **Clean & localise** — junk is removed *before* assets are downloaded, so
+     junk-only bytes are never fetched: `removeJunk()` (protecting the plan's
+     media embeds via `mediaTargets()`) + `stripStatic()` (unconditional:
+     `<script>`/`<noscript>`/preconnect & prefetch hints, `on*` handlers,
+     `javascript:` hrefs, comments), then `captureAssets()` walks the surviving
+     DOM, downloads every referenced asset (incl. `url()` in `<style>` blocks
+     and `.css` files), and rewrites refs to **relative local paths**
+     (`<a href>`/`<iframe src>` left alone; `<script src>` never downloaded),
+     then `swapMedia()` downloads embeds via yt-dlp and swaps them in.
+     `applyPlan()` in `src/clean.ts` still composes swap→junk→strip in one call
+     for tests/evals that clean an already-captured DOM.
   4. **Package** — writes `index.html`, `plan.json`, `manifest.json`.
 - **Agent** (`pnpm agent`, or `amber agent` from the npm install — src/cli.ts
   lazy-imports `agent/agent.js` so plain archives never load the SDK tool

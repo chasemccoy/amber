@@ -84,6 +84,53 @@ test("archiveUrl (auto backend) captures a server-rendered page without escalati
   }
 });
 
+test("archiveUrl never downloads assets referenced only by junk (junk removed before capture)", async () => {
+  const requested: string[] = [];
+  const junkPage = `<html><head><title>Post</title></head><body>
+    <article>
+      <h1>A post</h1>
+      <p>${"Plenty of visible body text so the static probe is satisfied. ".repeat(8)}</p>
+      <img src="/photo.png" alt="a photo">
+    </article>
+    <div class="cookie-banner"><img src="/cookie-art.png" alt=""></div>
+  </body></html>`;
+  const server = createServer((req, res) => {
+    requested.push(req.url ?? "");
+    if (req.url === "/") {
+      res.setHeader("content-type", "text/html");
+      res.end(junkPage);
+    } else if (req.url === "/photo.png" || req.url === "/cookie-art.png") {
+      res.setHeader("content-type", "image/png");
+      res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    } else {
+      res.statusCode = 404;
+      res.end("nope");
+    }
+  });
+  const base = await new Promise<string>((resolve) =>
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      resolve(`http://127.0.0.1:${port}`);
+    }),
+  );
+  const outRoot = fs.mkdtempSync(path.join(os.tmpdir(), "amber-e2e-"));
+  try {
+    const res = await archiveUrl(`${base}/`, { ...OPTS, outRoot, backend: "fetch" });
+
+    assert.ok(requested.includes("/photo.png"), "the article image should be downloaded");
+    assert.ok(!requested.includes("/cookie-art.png"), "the junk-only image should never be requested");
+
+    const html = fs.readFileSync(path.join(res.outDir, "index.html"), "utf8");
+    assert.ok(!html.includes("cookie-banner"), "junk element should be removed");
+    const manifest = JSON.parse(fs.readFileSync(path.join(res.outDir, "manifest.json"), "utf8"));
+    const assetUrls = manifest.assets.map((a: { url: string }) => a.url);
+    assert.ok(!assetUrls.some((u: string) => u.includes("cookie-art")), "junk asset should not be in the manifest");
+  } finally {
+    server.close();
+    fs.rmSync(outRoot, { recursive: true, force: true });
+  }
+});
+
 test("archiveUrl skips an unchanged re-archive and versions a changed one", async () => {
   const { server, base } = await serve();
   const outRoot = fs.mkdtempSync(path.join(os.tmpdir(), "amber-e2e-"));

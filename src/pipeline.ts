@@ -7,7 +7,7 @@ import type { CheerioAPI } from "cheerio";
 import { Capturer } from "./capture.js";
 import { renderPage } from "./render.js";
 import { heuristicPlan, llmPlan, parsePlan } from "./planner.js";
-import { applyPlan, type CleanReport } from "./clean.js";
+import { mediaTargets, removeJunk, stripStatic, swapMedia, type CleanReport } from "./clean.js";
 import { commitSnapshot, hashSnapshotContent } from "./snapshot.js";
 import type { CleanupPlan, CaptureOptions } from "./types.js";
 
@@ -210,20 +210,20 @@ async function finishArchive(
   const staging = cap.rootDir; // the snapshot is built here, then committed to outDir
 
   const rawHtml = cap.$.html();
-  log("[2/4] Downloading assets and rewriting references");
-  await cap.captureAssets();
-  log(`      ${cap.assets.length} assets, ${cap.errors.length} errors`);
 
-  // Decide the cleanup plan.
+  // Decide the cleanup plan first — junk is removed *before* assets are
+  // downloaded, so bytes referenced only by junk are never fetched and never
+  // land in assets/. The LLM judges the raw pre-capture HTML, so nothing here
+  // depends on rewritten paths.
   let plan: CleanupPlan;
   if (opts.planPath) {
-    log(`[3/4] Loading cleanup plan from ${opts.planPath}`);
+    log(`[2/4] Loading cleanup plan from ${opts.planPath}`);
     plan = parsePlan(JSON.parse(fs.readFileSync(opts.planPath, "utf8")));
   } else if (opts.useLLM && !process.env.ANTHROPIC_API_KEY) {
-    log("[3/4] No ANTHROPIC_API_KEY set — using the heuristic plan (set a key for Claude-judged cleaning)");
+    log("[2/4] No ANTHROPIC_API_KEY set — using the heuristic plan (set a key for Claude-judged cleaning)");
     plan = heuristicPlan(cap.$);
   } else if (opts.useLLM) {
-    log("[3/4] Asking Claude for a cleanup plan");
+    log("[2/4] Asking Claude for a cleanup plan");
     try {
       plan = await llmPlan(rawHtml, url, opts.model);
     } catch (err) {
@@ -231,15 +231,30 @@ async function finishArchive(
       plan = heuristicPlan(cap.$);
     }
   } else {
-    log("[3/4] Building heuristic cleanup plan (no LLM)");
+    log("[2/4] Building heuristic cleanup plan (no LLM)");
     plan = heuristicPlan(cap.$);
   }
   fs.writeFileSync(path.join(staging, "plan.json"), JSON.stringify(plan, null, 2));
 
-  // Apply it.
-  log("[4/4] Applying plan (removing junk, downloading embedded media)");
-  const cleanReport = await applyPlan(cap.$, plan, staging);
-  log(`      removed ${cleanReport.removed} elements; ${cleanReport.media.length} media item(s)`);
+  // Remove junk before downloading, protecting the plan's media embeds so a
+  // broad junk selector can't delete them ahead of the swap (the same guarantee
+  // applyPlan's swap-first ordering gives).
+  log("[3/4] Removing junk, then downloading assets and rewriting references");
+  const junk = removeJunk(cap.$, plan, mediaTargets(cap.$, plan));
+  const stripped = stripStatic(cap.$);
+  await cap.captureAssets();
+  log(`      removed ${junk.removed + stripped} elements; ${cap.assets.length} assets, ${cap.errors.length} errors`);
+
+  // Swap embedded media last — it downloads via yt-dlp straight into assets/,
+  // and the local refs it writes must not pass through captureAssets.
+  log("[4/4] Downloading embedded media");
+  const media = await swapMedia(cap.$, plan, staging);
+  log(`      ${media.length} media item(s)`);
+  const cleanReport: CleanReport = {
+    removed: junk.removed + stripped,
+    removeErrors: junk.removeErrors,
+    media,
+  };
 
   // Write final HTML, then hash the content (HTML + assets) for change detection.
   fs.writeFileSync(path.join(staging, "index.html"), cap.$.html());

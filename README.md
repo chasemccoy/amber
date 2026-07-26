@@ -46,11 +46,11 @@ overridable next time:
 ```
 [1/4] Fetching https://example.com/some-post (static probe)
       2841 chars of visible text — static capture is enough
-[2/4] Downloading assets and rewriting references
-      37 assets, 0 errors
-[3/4] Asking Claude for a cleanup plan
-[4/4] Applying plan (removing junk, downloading embedded media)
-      removed 12 elements; 1 media item(s)
+[2/4] Asking Claude for a cleanup plan
+[3/4] Removing junk, then downloading assets and rewriting references
+      removed 12 elements; 31 assets, 0 errors
+[4/4] Downloading embedded media
+      1 media item(s)
 
 Archive written to: ~/Documents/Archives/example.com-some-post/
   open ~/Documents/Archives/example.com-some-post/index.html
@@ -136,17 +136,20 @@ Pass `--overwrite` to replace the latest in place and keep no history.
 
 ## How it works
 
-1. **Capture** — render the page (static fetch, or headless Chromium when it's
-   client-rendered), then walk the DOM and rewrite every loaded reference —
-   `<link>`, `<img src/srcset>`, `<source>`, `<video>/<audio>`, inline styles, and
-   `url(...)` inside `<style>` blocks and CSS files (recursively, so web-fonts and
-   background images come too) — to a local path.
-2. **Plan** — `claude-sonnet-4-6` reads the page and returns a structured plan:
-   main-content selector, junk selectors, embedded media to download, and topical
-   tags. A heuristic fallback runs with `--no-llm` or if the API call fails.
-3. **Clean** — swap embedded media for local files, remove junk by selector, and
-   unconditionally strip anything a static copy must never keep: scripts, and
-   preload/prefetch/connection hints.
+1. **Capture** — render the page: static fetch, or headless Chromium when it's
+   client-rendered.
+2. **Plan** — `claude-sonnet-4-6` reads the raw page and returns a structured
+   plan: main-content selector, junk selectors, embedded media to download, and
+   topical tags. A heuristic fallback runs with `--no-llm` or if the API call
+   fails.
+3. **Clean & localise** — remove junk by selector and unconditionally strip
+   anything a static copy must never keep (scripts, preload/prefetch/connection
+   hints) *before* downloading, so bytes referenced only by junk are never
+   fetched. Then walk the surviving DOM and rewrite every loaded reference —
+   `<link>`, `<img src/srcset>`, `<source>`, `<video>/<audio>`, inline styles,
+   and `url(...)` inside `<style>` blocks and CSS files (recursively, so
+   web-fonts and background images come too) — to a local path, and finally
+   swap embedded media for locally downloaded files.
 4. **Package** — write `index.html`, `plan.json`, and `manifest.json`.
 
 ## Development
