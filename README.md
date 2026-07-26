@@ -2,7 +2,7 @@
   <img src=".github/assets/amber-mark.svg" alt="" width="40" valign="middle">&nbsp;&nbsp;Amber
 </h1>
 
-> Save any web page as a clean, self-contained offline copy — one folder, no junk, no callbacks to the live web.
+<p align="center">Save any web page as a clean, self-contained offline copy — one folder, no junk, no callbacks to the live web.</p>
 
 amber turns a URL into a folder you own: a single `index.html` with every image,
 stylesheet, font, and video pulled local, and the clutter — ads, cookie banners,
