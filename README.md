@@ -9,9 +9,7 @@
 
 <hr />
 
-Amber turns a URL into a folder you own: a single `index.html` with every image,
-
-stylesheet, font, and video pulled local, and the clutter — ads, cookie banners,
+Amber turns a URL into a folder you own: a single `index.html` with every image, stylesheet, font, and video pulled local, and the clutter — ads, cookie banners,
 trackers, newsletter popups, analytics scripts — stripped away. Open it in ten
 years with the network unplugged and it still just works.
 
@@ -82,13 +80,13 @@ key is set. The flags below only *force* a choice.
 
 ```bash
 amber <url>                     # auto capture + Claude if a key is set
-amber --no-llm     <url>        # heuristics only, never call the model
-amber --static     <url>        # force a plain HTTP fetch (never boot Chromium)
+amber --no-llm <url>            # heuristics only, never call the model
+amber --static <url>            # force a plain HTTP fetch (never boot Chromium)
 amber --playwright <url>        # force a headless-Chromium render
 amber --plan plan.json <url>    # replay or audit a saved plan
-amber --overwrite      <url>    # replace the latest snapshot, keep no history
-amber -o ~/somewhere   <url>    # choose the output directory
-amber agent            <url>    # Claude cleans interactively — for pages the pipeline gets wrong
+amber --overwrite <url>         # replace the latest snapshot, keep no history
+amber -o ~/somewhere <url>      # choose the output directory
+amber agent <url>               # Claude cleans interactively — for pages the pipeline gets wrong
 amber doctor                    # check the environment: key, Playwright, yt-dlp, ffmpeg
 ```
 
