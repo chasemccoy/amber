@@ -16,7 +16,7 @@ years with the network unplugged and it still just works.
 The mechanical half (render, download, rewrite, package) is deterministic
 TypeScript. The judgement half — *what's junk? what's the real content? which
 embed is a video worth keeping?* — is handled by Claude and written out as a
-`plan.json` you can read, edit, and replay. You stay in control.
+`plan.json` you can read, edit, and replay.
 
 ## Features
 
@@ -27,7 +27,6 @@ embed is a video worth keeping?* — is handled by Claude and written out as a
 - 🧠 **Claude does the judgement** — and writes it to an auditable `plan.json` you can edit and re-apply.
 - 🏷️ **Auto-tagged** — Claude reads the page and adds topical tags to the manifest for later browsing and search.
 - 🌐 **Handles JS-rendered pages** — headless Chromium (Playwright) capture, used only when a page actually needs it.
-- 🖱️ **One-click browser extension** — archive the tab you're looking at, using your own session. See [`extension/`](extension/README.md).
 - 🕵️ **An escalation path for stubborn pages** — `amber agent` has Claude clean the page interactively, tool call by tool call, when the one-shot plan isn't enough.
 
 ## Quick start
@@ -92,8 +91,7 @@ amber doctor                    # check the environment: key, Playwright, yt-dlp
 
 ## When an archive comes out wrong
 
-The cleanup is judgement, and judgement sometimes misses. Amber's answer is an
-escalation ladder — each step trades more time and cost for more care:
+The cleanup step uses Claude's judgement by defult, and sometimes Claude gets things wrong. Amber has a few options for handling this, each trading more time and cost for more care:
 
 1. **Read the judgement.** `plan.json` in the archive folder is the complete
    plan that was applied: what was removed, what was kept, which embeds were
@@ -151,21 +149,6 @@ Pass `--overwrite` to replace the latest in place and keep no history.
    preload/prefetch/connection hints.
 4. **Package** — write `index.html`, `plan.json`, and `manifest.json`.
 
-<details>
-<summary>The design: split the labour</summary>
-
-The work splits into two kinds, and that split is the whole point:
-
-| Mechanical (code is good at this) | Judgement (an LLM is good at this) |
-|---|---|
-| Render the page; download every asset | Decide what's junk vs. main content |
-| Rewrite references to local paths | Spot ads / cookie banners / tracker scripts |
-| Run yt-dlp; package the folder | Recognise an embed worth downloading as real media |
-
-The mechanical half is deterministic and fast; the judgement half is the part a
-human would otherwise do by hand, one page at a time.
-</details>
-
 ## Development
 
 ```bash
@@ -179,11 +162,6 @@ pnpm typecheck       # tsc --noEmit
 pnpm evals           # judgement suite (see evals/README.md)
 pnpm build           # tsup → dist/ (what npm installs; bin/amber.js wraps dist/cli.js)
 ```
-
-The [`vitest-evals`](https://vitest-evals.sentry.dev) suite scores the
-*judgement*, not the plumbing: does the planner strip the right junk, keep the
-main content and structure, tag the topics, and find embedded media? Functional
-judges apply each plan to fixture pages with known ground truth.
 
 ## Limitations
 
