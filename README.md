@@ -83,21 +83,16 @@ amber <url>                     # auto capture + Claude if a key is set
 amber --no-llm <url>            # heuristics only, never call the model
 amber --static <url>            # force a plain HTTP fetch (never boot Chromium)
 amber --playwright <url>        # force a headless-Chromium render
-amber --plan plan.json <url>    # replay or audit a saved plan
+amber --plan plan.json <url>    # replay a saved plan
 amber --overwrite <url>         # replace the latest snapshot, keep no history
 amber -o ~/somewhere <url>      # choose the output directory
 amber agent <url>               # Claude cleans interactively — for pages the pipeline gets wrong
 amber doctor                    # check the environment: key, Playwright, yt-dlp, ffmpeg
 ```
 
-**Browser extension** — to archive the page you're already looking at, the
-Chrome/Chromium extension sends the active tab's rendered DOM to a local amber
-host (no headless browser needed — your tab *is* the capture). Setup is in
-[`extension/README.md`](extension/README.md).
-
 ## When an archive comes out wrong
 
-The cleanup is judgement, and judgement sometimes misses. amber's answer is an
+The cleanup is judgement, and judgement sometimes misses. Amber's answer is an
 escalation ladder — each step trades more time and cost for more care:
 
 1. **Read the judgement.** `plan.json` in the archive folder is the complete
@@ -115,29 +110,20 @@ escalation ladder — each step trades more time and cost for more care:
    egress and your browser's cookies for yt-dlp. Details in
    [`agent/README.md`](agent/README.md).
 
-Nothing ever asks a question mid-run: amber decides, tells you what it decided,
-and every decision can be overridden on the next run — with a flag, an edited
-plan, or the agent.
-
 ## What you get
 
 ```
 ~/Documents/Archives/example.com-some-post/
-├── index.html        # cleaned, faithful to the original — always the newest capture
+├── index.html              # cleaned, faithful to the original — always the newest capture
 ├── assets/
-│   ├── images/        # every image, favicon, srcset entry
-│   ├── static/        # css, fonts
-│   └── media/         # videos/audio — self-hosted files + yt-dlp downloads
-├── plan.json          # the cleanup judgement that was applied (auditable, replayable)
-├── manifest.json      # source URL, capture time, topical tags, asset list, errors, what was removed
-└── versions/          # older snapshots (only after you re-archive), each a full archive
-    └── 20260102T090000Z/    # … with its own index.html + assets + manifest
+│   ├── images/             # every image, favicon, srcset entry
+│   ├── static/             # css, fonts
+│   └── media/              # videos/audio — self-hosted files + yt-dlp downloads
+├── plan.json               # the cleanup judgement that was applied (auditable, replayable)
+├── manifest.json           # source URL, capture time, topical tags, asset list, errors, what was removed
+└── versions/               # older snapshots (only after you re-archive), each a full archive
+    └── 20260102T090000Z/   # … with its own index.html + assets + manifest
 ```
-
-The HTML stays byte-faithful to the original — provenance lives in
-`manifest.json`, not injected into the page. `<a href>` links are left pointing
-at the live web by design: amber localises what a page *loads*, not where it
-*links*.
 
 ## History over time
 
