@@ -176,5 +176,5 @@ pnpm build           # tsup → dist/ (what npm installs; bin/amber.js wraps dis
 ## Credits
 
 Inspired by Alex Chan's [*A personal archive of the web*](https://alexwlchan.net/2025/personal-archive-of-the-web/),
-which describes doing this by hand. amber automates the mechanical parts and
+which describes doing this by hand. Amber automates the mechanical parts and
 hands the judgement to Claude.
