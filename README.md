@@ -22,11 +22,12 @@ embed is a video worth keeping?* — is handled by Claude and written out as a
 
 - 📦 **One self-contained folder per page** — `index.html` + a local `assets/` tree, every reference rewritten to a relative path.
 - 🧹 **De-junked** — ads, cookie/consent banners, share bars, newsletter popups, and tracking scripts removed; the page's own structure (header, nav, footer, bylines) kept.
-- 🔌 **Genuinely offline** — scripts and connection/preload hints (`preconnect`, `modulepreload`, `prefetch`, …) are stripped, so an opened archive makes no background requests.
+- 🔌 **Genuinely offline** — scripts and connection/preload hints (`preconnect`, `modulepreload`, `prefetch`, …) are stripped, so an opened archive makes no background requests. (Keep-js archives patch the network APIs instead: recorded data replays offline, unrecorded requests fail synthetically.)
 - 🎥 **Real media, not dead embeds** — a YouTube/Vimeo embed becomes a downloaded local `<video>` (via yt-dlp); self-hosted clips are localised too.
 - 🧠 **Claude does the judgement** — and writes it to an auditable `plan.json` you can edit and re-apply.
 - 🏷️ **Auto-tagged** — Claude reads the page and adds topical tags to the manifest for later browsing and search.
 - 🌐 **Handles JS-rendered pages** — headless Chromium (Playwright) capture, used only when a page actually needs it.
+- 🫀 **Preserves living pages** — when a page's presentation *is* its JavaScript (WebGL scenes, scroll choreography), Claude escalates to keep-js mode: the page's own code is kept and bundled, the browsing session's data is recorded and replayed, and the archive collapses into one self-contained `index.html` that plays offline. See [Living pages](#living-pages-keep-js).
 - 🕵️ **An escalation path for stubborn pages** — `amber agent` has Claude clean the page interactively, tool call by tool call, when the one-shot plan isn't enough.
 
 ## Quick start
@@ -85,8 +86,11 @@ amber --playwright <url>        # force a headless-Chromium render
 amber --plan plan.json <url>    # replay a saved plan
 amber --overwrite <url>         # replace the latest snapshot, keep no history
 amber -o ~/somewhere <url>      # choose the output directory
+amber --keep-js <url>           # force keep-js mode (see Living pages below)
+amber --no-keep-js <url>        # never keep JS, even if the plan recommends it
 amber agent <url>               # Claude cleans interactively — for pages the pipeline gets wrong
-amber doctor                    # check the environment: key, Playwright, yt-dlp, ffmpeg
+amber serve <slug-or-path>      # view an archive over localhost (folder-layout keep-js archives)
+amber doctor                    # check the environment: key, Playwright, esbuild, yt-dlp, ffmpeg
 ```
 
 ## When an archive comes out wrong
@@ -107,6 +111,42 @@ The cleanup step uses Claude's judgement by defult, and sometimes Claude gets th
    and Playwright; best on a machine you own, where it has direct network
    egress and your browser's cookies for yt-dlp. Details in
    [`agent/README.md`](agent/README.md).
+
+## Living pages (keep-js)
+
+Most pages read perfectly as static HTML, and stripping their scripts is what
+makes an archive private and permanent. But for some pages the experience *is*
+the JavaScript — a WebGL hero, scroll-driven film choreography, a generative
+art piece. A static snapshot of one of those is a blank or broken skeleton.
+
+For these, amber has **keep-js mode**. By default Claude decides per page: the
+plan carries a `preserveRuntime` judgement, and when it's true (and esbuild +
+Playwright are installed) the pipeline re-captures in keep-js mode
+automatically. `--keep-js` forces it on; `--no-keep-js` forbids it.
+
+What it does:
+
+- **Keeps the page's own code, drops the surveillance.** Analytics/consent/ad
+  scripts are still removed; the app bundle survives.
+- **Flattens module scripts** into one classic script (esbuild), because
+  browsers refuse to load ES modules from a double-clicked `file://` page.
+- **Records the browsing session** during the render — every runtime-fetched
+  asset and API response — and replays it offline through a small shim that
+  patches `fetch`/`XMLHttpRequest` and remaps runtime-constructed asset URLs.
+  Randomness is seeded identically at capture and replay, so pages that
+  randomise at boot make the same choices. Frame sequences (`f_001.webp`,
+  `f_002.webp`, …) are completed by fetching the gaps the render didn't hit.
+- **Collapses to a single `index.html`** with every asset inlined as a `data:`
+  URI. This is what makes canvas and WebGL work from a double-clicked file —
+  `data:` resources are same-origin, so nothing hits the browser's `file://`
+  taint rules. Archives whose assets exceed ~200MB keep the folder layout
+  instead and get a double-clickable **`View archive.command`** that serves
+  them on localhost (or use `amber serve`).
+
+The contract: **the recorded session works offline; behaviour beyond it is
+best-effort.** Data behind interactions the capture never performed isn't in
+the archive. Keep-js needs `ANTHROPIC_API_KEY` (for the judgement — or force
+it with `--keep-js`), Playwright, and esbuild (`npm i -g esbuild`).
 
 ## What you get
 
@@ -139,9 +179,10 @@ Pass `--overwrite` to replace the latest in place and keep no history.
 1. **Capture** — render the page: static fetch, or headless Chromium when it's
    client-rendered.
 2. **Plan** — `claude-sonnet-4-6` reads the raw page and returns a structured
-   plan: main-content selector, junk selectors, embedded media to download, and
-   topical tags. A heuristic fallback runs with `--no-llm` or if the API call
-   fails.
+   plan: main-content selector, junk selectors, embedded media to download,
+   topical tags, and a `preserveRuntime` judgement (does the presentation need
+   its JS? → keep-js mode). A heuristic fallback runs with `--no-llm` or if
+   the API call fails.
 3. **Clean & localise** — remove junk by selector and unconditionally strip
    anything a static copy must never keep (scripts, preload/prefetch/connection
    hints) *before* downloading, so bytes referenced only by junk are never
@@ -172,6 +213,9 @@ pnpm build           # tsup → dist/ (what npm installs; bin/amber.js wraps dis
 - **No ffmpeg → no stream muxing.** Without it, set `AMBER_MEDIA_FORMAT` to a progressive single-file format.
 - **Interactive `<iframe>` embeds can't be made offline** — CAD viewers, live web apps, and the like stay pointed at the original.
 - **The plan is advisory, not infallible** — which is exactly why it's written to disk: read it, edit it, re-run with `--plan`.
+- **Some SPA routers refuse `file://`.** An app that matches `location.pathname` against its routes sees a filesystem path from a double-clicked file, and may hard-navigate away. Those archives work over a localhost origin instead — `View archive.command` or `amber serve`. (Worker-based WebGL engines — Draco/Basis decoding, WASM physics — *do* work: the shim translates URL spaces and replays recorded responses to them.)
+- **Keep-js preserves the recorded session, not the live service.** Content behind interactions the capture never performed is absent; apps that render from per-user server data will replay the captured session's data. Bundles using top-level `await` or truly dynamic `import(expr)` can't be flattened and fall back to a static archive (noted in the manifest).
+- **Single-file archives trade open-time for portability** — a ~190MB `index.html` takes a few seconds to parse on open. The launcher fallback needs Node on the machine (any static server works too: `python3 -m http.server`).
 
 ## Credits
 

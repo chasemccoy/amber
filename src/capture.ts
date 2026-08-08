@@ -11,7 +11,7 @@ import * as crypto from "node:crypto";
 import * as cheerio from "cheerio";
 import type { CheerioAPI } from "cheerio";
 import type { Element } from "domhandler";
-import { USER_AGENT, type RenderResult } from "./render.js";
+import { USER_AGENT, type RenderResult, type RenderedResource } from "./render.js";
 import type { Asset } from "./types.js";
 
 const EXT_BY_CTYPE: Record<string, string> = {
@@ -95,12 +95,26 @@ export class Capturer {
   finalUrl = "";
 
   private cache = new Map<string, Asset>();
-  private prefetched = new Map<string, { contentType: string; body: Buffer }>();
+  private prefetched = new Map<string, RenderedResource>();
 
   constructor(
     readonly rootDir: string,
-    private readonly opts: { timeoutMs: number; insecureTLS: boolean },
+    private readonly opts: { timeoutMs: number; insecureTLS: boolean; keepScripts?: boolean },
   ) {}
+
+  /** The render's recorded responses — keep-js needs them for bundling/replay. */
+  get prefetchedResources(): Map<string, RenderedResource> {
+    return this.prefetched;
+  }
+
+  /**
+   * Localise a URL that nothing in the DOM references (keep-js: resources the
+   * page loads at runtime via JS). Served from the render's recorded bytes
+   * when present; deduped against everything captureAssets already wrote.
+   */
+  async ensureAsset(absUrl: string): Promise<Asset | null> {
+    return this.download(absUrl);
+  }
 
   /** Build state from a Playwright render (preferred — assets come for free). */
   loadRender(r: RenderResult): void {
@@ -232,7 +246,12 @@ export class Capturer {
     for (const el of $("link[imagesrcset]").toArray()) await this.localiseSrcset(el, htmlRel, "imagesrcset");
     // <script src> is intentionally not localised — scripts are stripped in the
     // clean step (a static offline snapshot never runs them), so downloading
-    // them would just orphan bytes in assets/.
+    // them would just orphan bytes in assets/. In keep-js mode the surviving
+    // classic scripts ARE localised (modules were already flattened into a
+    // local bundle, marked data-amber, which must not be re-downloaded).
+    if (this.opts.keepScripts) {
+      for (const el of $("script[src]:not([data-amber])").toArray()) await localise(el, "src");
+    }
     for (const el of $("img").toArray()) {
       await localise(el, "src");
       await this.localiseSrcset(el, htmlRel);

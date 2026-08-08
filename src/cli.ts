@@ -25,6 +25,7 @@ import { AmberError } from "./errors.js";
 const USAGE =
   "usage: amber [options] <url>\n" +
   "       amber agent [options] <url>\n" +
+  "       amber serve [options] <slug-or-path>\n" +
   "       amber doctor";
 
 const HELP = `amber — save a web page as a clean, self-contained offline folder
@@ -39,6 +40,18 @@ options:
   --plan <file>      replay a saved plan.json instead of asking for judgement
   --model <id>       planning model (default claude-sonnet-4-6, or $AMBER_MODEL)
   --overwrite        replace the latest snapshot in place; keep no history
+  --keep-js          force keep-js mode: preserve the page's own JS. Module
+                     scripts are flattened into a classic bundle, trackers are
+                     still removed, runtime-fetched data is embedded + replayed
+                     offline, and the archive collapses into ONE self-contained
+                     index.html (assets inlined as data: URIs, so canvas/WebGL
+                     work from a double-clicked file). Very large archives keep
+                     the folder layout + a double-clickable
+                     "View archive.command" instead. Implies --playwright.
+                     By default Claude decides per page: when its plan judges
+                     that the presentation needs the JS (canvas/WebGL, scroll
+                     choreography), amber escalates to keep-js automatically.
+  --no-keep-js       never keep JS, even when the plan recommends it
   --timeout <ms>     capture timeout (default 45000)
   --insecure-tls     tolerate a trusted MITM proxy (or $AMBER_INSECURE_TLS=1)
   -q, --quiet        suppress progress output
@@ -49,6 +62,9 @@ subcommands:
   agent <url>        Claude cleans the page interactively with tools instead of
                      one planning call — for pages the pipeline gets wrong.
                      Needs a key + Playwright; costs more (amber agent --help)
+  serve <slug|path>  serve an archive over http://127.0.0.1 — needed for
+                     --keep-js archives of WebGL-heavy sites (file:// blocks
+                     canvas/WebGL use of local media; localhost doesn't)
   doctor             check the environment: key, Playwright, yt-dlp, ffmpeg
 
 Re-archiving a URL keeps history: the previous capture rotates into
@@ -71,6 +87,49 @@ options:
   --model <id>       model to use (default claude-sonnet-4-6, or $AMBER_MODEL)
   --overwrite        replace the latest snapshot in place; keep no history
   -h, --help         show this help`;
+
+/** `amber serve <slug|path>` — view an archive over localhost. */
+async function runServeCli(args: string[]): Promise<number> {
+  let values, positionals;
+  try {
+    ({ values, positionals } = parseArgs({
+      args,
+      allowPositionals: true,
+      options: {
+        out: { type: "string", short: "o", default: defaultArchiveDir() },
+        port: { type: "string", default: "0" },
+        "no-open": { type: "boolean", default: false },
+        help: { type: "boolean", short: "h", default: false },
+      },
+    }));
+  } catch (err) {
+    console.error(`error: ${(err as Error).message}\n\nusage: amber serve [options] <slug-or-path>`);
+    return 2;
+  }
+  if (values.help || !positionals[0]) {
+    console.log(
+      "amber serve — view an archive over http://127.0.0.1 (keeps WebGL/canvas working)\n\n" +
+        "usage: amber serve [options] <slug-or-path>\n\n" +
+        "options:\n" +
+        "  -o, --out <dir>    archive root to resolve slugs against (default ~/Documents/Archives)\n" +
+        "  --port <n>         port to bind (default: a free ephemeral port)\n" +
+        "  --no-open          don't open the browser automatically",
+    );
+    return values.help ? 0 : 2;
+  }
+
+  const { resolveArchiveDir, serveArchive } = await import("./serve.js");
+  const dir = resolveArchiveDir(positionals[0], values.out!);
+  const { url } = await serveArchive(dir, Number(values.port));
+  console.log(`Serving ${dir}\n  ${url}  (Ctrl-C to stop)`);
+  if (!values["no-open"] && process.platform === "darwin") {
+    const { spawn } = await import("node:child_process");
+    spawn("open", [url], { stdio: "ignore", detached: true }).unref();
+  }
+  // Keep the process alive until Ctrl-C.
+  await new Promise(() => {});
+  return 0;
+}
 
 /** `amber agent <url>` — the interactive-judgement escalation path. */
 async function runAgentCli(args: string[]): Promise<number> {
@@ -116,6 +175,7 @@ async function runAgentCli(args: string[]): Promise<number> {
 async function main(): Promise<number> {
   if (process.argv[2] === "doctor") return runDoctor();
   if (process.argv[2] === "agent") return runAgentCli(process.argv.slice(3));
+  if (process.argv[2] === "serve") return runServeCli(process.argv.slice(3));
 
   let values, positionals;
   try {
@@ -131,6 +191,8 @@ async function main(): Promise<number> {
         "insecure-tls": { type: "boolean", default: process.env.AMBER_INSECURE_TLS === "1" },
         timeout: { type: "string", default: "45000" },
         overwrite: { type: "boolean", default: false }, // replace latest in place, no history
+        "keep-js": { type: "boolean", default: false }, // force runtime preservation on
+        "no-keep-js": { type: "boolean", default: false }, // forbid it (default: Claude decides)
         quiet: { type: "boolean", short: "q", default: false },
         help: { type: "boolean", short: "h", default: false },
         version: { type: "boolean", default: false },
@@ -162,6 +224,14 @@ async function main(): Promise<number> {
     console.error("error: --static and --playwright are mutually exclusive");
     return 2;
   }
+  if (values.static && values["keep-js"]) {
+    console.error("error: --keep-js needs a browser render (it records the page's runtime); drop --static");
+    return 2;
+  }
+  if (values["keep-js"] && values["no-keep-js"]) {
+    console.error("error: --keep-js and --no-keep-js are mutually exclusive");
+    return 2;
+  }
 
   const res = await archiveUrl(url, {
     outRoot: values.out!,
@@ -172,6 +242,8 @@ async function main(): Promise<number> {
     insecureTLS: values["insecure-tls"]!,
     timeoutMs: Number(values.timeout),
     overwrite: values.overwrite,
+    keepJs: values["keep-js"] ? true : undefined,
+    autoKeepJs: !values["no-keep-js"],
     verbose: !values.quiet,
   });
 
@@ -182,6 +254,13 @@ async function main(): Promise<number> {
       console.log(`\nArchive written to: ${res.outDir}/`);
       if (res.archivedTo) console.log(`  previous snapshot archived to ${res.archivedTo}/`);
       console.log(`  open ${res.outDir}/index.html`);
+      if (res.keepJs && !res.keepJs.singleFile) {
+        console.log(
+          `  note: assets were too large to inline into a single file, so canvas/WebGL\n` +
+            `        visuals need a localhost origin — double-click "View archive.command"\n` +
+            `        in the archive folder, or run: amber serve ${JSON.stringify(res.outDir)}`,
+        );
+      }
     }
   }
   return 0;

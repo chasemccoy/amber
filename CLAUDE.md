@@ -41,6 +41,14 @@ Two entry points share the same capture/clean code:
      render only when the page looks client-rendered (`assessRendering`).
   2. **Plan** — `src/planner.ts`. `llmPlan()` judges the *raw pre-capture* HTML
      (`messages.parse` + a Zod schema); `heuristicPlan()` is the no-key fallback.
+     The plan includes `preserveRuntime` — Claude's judgement of whether the
+     page's presentation needs its JS at view time. Plan resolution happens in
+     `archiveUrl()` (via `resolvePlan()`), *before* clean/localise, so a true
+     verdict can re-capture the page in keep-js mode (`--keep-js` forces it,
+     `--no-keep-js` forbids it; auto-escalation needs esbuild + Playwright and
+     is skipped under `--static`). Only the LLM plan sets it; heuristics never
+     escalate. Guarded by `evals/runtime.eval.ts` (fixtures in `shared.ts`
+     `RUNTIME_FIXTURES` — the false cases are deliberately tempting).
   3. **Clean & localise** — junk is removed *before* assets are downloaded, so
      junk-only bytes are never fetched: `removeJunk()` (protecting the plan's
      media embeds via `mediaTargets()`) + `stripStatic()` (unconditional:
@@ -53,6 +61,32 @@ Two entry points share the same capture/clean code:
      `applyPlan()` in `src/clean.ts` still composes swap→junk→strip in one call
      for tests/evals that clean an already-captured DOM.
   4. **Package** — writes `index.html`, `plan.json`, `manifest.json`.
+
+  **Keep-js mode** (`src/keepjs.ts`) — preserves a page's own runtime when the
+  experience *is* the JS (WebGL, scroll choreography). During the Playwright
+  render (with `deterministicRandom` — Math.random seeded identically in render
+  and replay — plus a denser auto-scroll), every response is recorded; then:
+  trackers removed by heuristic, module scripts flattened to one classic IIFE
+  via esbuild (recorded responses as the virtual fs, network fallback for lazy
+  chunks), a replay shim injected (patches fetch/XHR from an embedded response
+  map, remaps runtime-constructed element src/poster/href through an asset map
+  with nearest-variant fallback, stubs beacons/WebSocket), runtime-only assets
+  localised with numeric-sequence gap-filling, and finally
+  `finalizeKeepJsDelivery()` collapses everything into ONE self-contained
+  `index.html` with assets as data: URIs — that's what lets canvas/WebGL run
+  from a double-clicked file:// page (file:// taints local media otherwise).
+  The inliner STREAMS the output (DOM holds `@@AMBER[rel]@@` tokens, expanded
+  from disk in slices) — building the base64 in-memory OOMs Node on real
+  sites; when it writes index.html itself, finishArchive must not clobber it.
+  Past `INLINE_CAP_BYTES` (200MB raw; `AMBER_INLINE_CAP` overrides, mainly for
+  testing) the folder layout is kept plus a double-clickable
+  `View archive.command` (a `#!/bin/sh` wrapper around `node -e` — running the
+  file through node directly breaks under any ancestor `"type": "module"`).
+  `amber serve` (`src/serve.ts`) serves any archive on 127.0.0.1. esbuild is an
+  optional peer dep like Playwright (in devDependencies for repo work);
+  `amber doctor` reports it. Keep-js contract: the recorded session replays
+  offline; behaviour beyond it is best-effort. Extension path and agent mode
+  don't support keep-js.
 - **Agent** (`pnpm agent`, or `amber agent` from the npm install — src/cli.ts
   lazy-imports `agent/agent.js` so plain archives never load the SDK tool
   runner) — `agent/agent.ts` `runAgentLoop()`, a `beta.messages.toolRunner`
@@ -136,5 +170,8 @@ and provenance requires the GitHub repo to stay public. Requires Node ≥ 24.
 ## Tests
 
 `test/*.test.ts` run via `node --test` and are fully deterministic (no key,
-network, or browser) — keep them that way. `evals/*.eval.ts` gate the LLM and
+network, or browser) — keep them that way. The keep-js replay shim is tested
+for real in `test/shim.test.ts`: applyKeepJs builds the page, and the injected
+shim script executes in a `node:vm` sandbox with a stub DOM — every shim
+behavior exists because a real site broke without it, so pin new ones there. `evals/*.eval.ts` gate the LLM and
 agent suites behind `ANTHROPIC_API_KEY` and skip without it.

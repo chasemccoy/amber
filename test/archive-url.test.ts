@@ -11,7 +11,7 @@ import type { AddressInfo } from "node:net";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { archiveUrl } from "../src/pipeline.js";
+import { archiveUrl, slugifyUrl } from "../src/pipeline.js";
 
 const PAGE = `<html><head>
   <title>Server-rendered post</title>
@@ -145,4 +145,11 @@ test("archiveUrl skips an unchanged re-archive and versions a changed one", asyn
     server.close();
     fs.rmSync(outRoot, { recursive: true, force: true });
   }
+});
+
+test("slugifyUrl de-fangs macOS bundle extensions (.app folders can't open in Finder)", () => {
+  assert.equal(slugifyUrl("https://linear.app/"), "linear-app");
+  assert.equal(slugifyUrl("https://linear.app/customers"), "linear.app-customers");
+  assert.equal(slugifyUrl("https://example.framework/"), "example-framework");
+  assert.equal(slugifyUrl("https://pear.no/"), "pear.no"); // normal hosts unchanged
 });

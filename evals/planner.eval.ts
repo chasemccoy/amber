@@ -41,6 +41,8 @@ describeEval(
       it.skipIf(!hasApiKey)(f.name, async ({ run }) => {
         const result = await run(f.name, { metadata: fixtureMeta(f) });
         expect(result.output.mainContentSelector).toBeTruthy();
+        // All three fixtures are static-friendly articles — keep-js must not trigger.
+        expect(result.output.preserveRuntime).toBe(false);
       });
     }
   },

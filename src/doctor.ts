@@ -70,6 +70,19 @@ async function checkPlaywright(): Promise<Check> {
   };
 }
 
+async function checkEsbuild(): Promise<Check> {
+  try {
+    const esbuild = await import("esbuild");
+    return { status: "ok", summary: `esbuild ${esbuild.version} — keep-js can flatten module scripts` };
+  } catch {
+    return {
+      status: "warn",
+      summary: "esbuild not installed — keep-js (preserve a page's runtime) unavailable",
+      detail: "npm install -g esbuild",
+    };
+  }
+}
+
 function checkYtDlp(): Check {
   const v = commandVersion("yt-dlp");
   return v
@@ -115,6 +128,7 @@ export async function runDoctor(): Promise<number> {
     checkNode(),
     checkApiKey(),
     await checkPlaywright(),
+    await checkEsbuild(),
     checkYtDlp(),
     checkFfmpeg(),
     checkArchiveDir(),

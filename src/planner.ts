@@ -46,6 +46,7 @@ export function heuristicPlan($: CheerioAPI): CleanupPlan {
     removeSelectors: selectors,
     media: [],
     tags: heuristicTags($),
+    preserveRuntime: false, // needs judgement — only the LLM plan sets this
     notes:
       "Heuristic plan: stripped scripts/iframes and elements whose id/class match common ad/cookie/newsletter patterns.",
     source: "heuristic",
@@ -106,6 +107,18 @@ lowercase, specific to what the page is about (people, technologies, fields, \
 events, concepts), and concise (one to three words). Use the real topics, not \
 generic words like "article", "blog", "website", or the site's name.
 
+6. RUNTIME (preserveRuntime) — decide whether the page's PRESENTATION needs its \
+JavaScript running at view time. Most pages (articles, docs, blogs, news, \
+server-rendered sites) read perfectly as static HTML: preserveRuntime=false. Set \
+true only when the experience IS the JavaScript — the archive would be blank or \
+skeletal without it: canvas/WebGL scenes and shader backgrounds, scroll-driven \
+choreography (GSAP/Lenis/three.js-style), pages whose body is an empty SPA mount \
+filled entirely by a JS bundle, or interactive/media work with no static \
+fallback. Signals in raw HTML: <canvas> elements, a near-empty <body> with one \
+large module bundle, animation-library scripts paired with little static text. \
+When true the archiver keeps and bundles the page's own scripts (analytics and \
+trackers are still removed) — so reserve it for pages that genuinely need it.
+
 Return selectors that are valid CSS and as specific as needed to be unambiguous. \
 Prefer ids; otherwise tag + class. Err strongly on the side of keeping: if there \
 is any doubt whether something is junk or part of the site's own content or \
@@ -128,6 +141,9 @@ const PlanSchema = z.object({
   tags: z
     .array(z.string())
     .describe("3-7 lowercase topical tags describing the page's subject matter (not generic words)"),
+  preserveRuntime: z
+    .boolean()
+    .describe("True ONLY if the page's presentation needs its JS at view time (canvas/WebGL, scroll choreography, JS-only rendering)"),
   notes: z.string().describe("Brief rationale for the human reviewer"),
 });
 
@@ -167,6 +183,7 @@ export async function llmPlan(
     removeSelectors: p.removeSelectors,
     media,
     tags: normalizeTags(p.tags),
+    preserveRuntime: p.preserveRuntime,
     notes: p.notes,
     source: "llm",
   };
@@ -207,6 +224,7 @@ const StoredPlanSchema = z.object({
     )
     .default([]),
   tags: z.array(z.string()).default([]),
+  preserveRuntime: z.boolean().default(false),
   notes: z.string().default(""),
   source: z.string().default("file"),
 });
@@ -225,6 +243,7 @@ export function parsePlan(raw: unknown): CleanupPlan {
       description: m.description,
     })),
     tags: normalizeTags(p.tags),
+    preserveRuntime: p.preserveRuntime,
     notes: p.notes,
     source: p.source,
   };

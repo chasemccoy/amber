@@ -24,6 +24,12 @@ export interface CleanupPlan {
   media: MediaEmbed[];
   /** Topical tags describing the page's subject matter, for later browsing/search. */
   tags: string[];
+  /**
+   * True when the page's presentation NEEDS its JavaScript at view time
+   * (canvas/WebGL scenes, scroll choreography, JS-only rendering) — the
+   * pipeline escalates to keep-js mode when Claude sets this.
+   */
+  preserveRuntime: boolean;
   notes: string;
   /** "heuristic" | "llm" | "file" | "agent". */
   source: string;

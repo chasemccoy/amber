@@ -13,22 +13,57 @@ export const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
+export interface RenderedResource {
+  contentType: string;
+  body: Buffer;
+  /**
+   * Playwright's request.resourceType() — "script", "xhr", "fetch",
+   * "stylesheet", … Lets keep-js mode tell app code and runtime data apart.
+   * Absent for resources that arrived without one (extension captures).
+   */
+  resourceType?: string;
+}
+
 export interface RenderResult {
   html: string;
   finalUrl: string;
   baseUrl: string;
   /** url (without fragment) -> bytes the browser already downloaded. */
-  resources: Map<string, { contentType: string; body: Buffer }>;
+  resources: Map<string, RenderedResource>;
 }
 
 export interface RenderOptions {
   timeoutMs: number;
   insecureTLS: boolean;
+  /**
+   * keep-js: seed Math.random with a fixed PRNG before any page script runs.
+   * The replay shim seeds identically, so a page that randomises at boot
+   * (pick-a-film, A/B variants) makes the same choices offline as it did
+   * during the recorded render — otherwise it would request variants the
+   * recording never captured.
+   */
+  deterministicRandom?: boolean;
 }
 
-/** Scroll the page to trigger lazy-loaded images/content, then return to top. */
-async function autoScroll(page: import("playwright").Page): Promise<void> {
-  await page.evaluate(async () => {
+/** Mulberry32 over a fixed seed — tiny, and identical in render + shim. */
+export const SEEDED_RANDOM_SNIPPET = `(function () {
+  var s = 0xA3C59AC3;
+  Math.random = function () {
+    s = (s + 0x6D2B79F5) | 0;
+    var t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+})();`;
+
+/**
+ * Scroll the page to trigger lazy-loaded images/content, then return to top.
+ * keep-js uses a denser sweep (smaller steps): scroll-scrubbed sites request
+ * assets per scroll band, and each band the sweep skips is an asset the
+ * offline replay won't have.
+ */
+async function autoScroll(page: import("playwright").Page, dense = false): Promise<void> {
+  await page.evaluate(async ({ step, interval }: { step: number; interval: number }) => {
     // This callback runs in the browser. Reach the window/document globals via
     // globalThis so the file doesn't require the DOM lib when type-checked by a
     // consumer that imports amber (e.g. a Node server without "DOM" in its lib).
@@ -40,7 +75,6 @@ async function autoScroll(page: import("playwright").Page): Promise<void> {
     };
     await new Promise<void>((resolve) => {
       let total = 0;
-      const step = 600;
       const timer = setInterval(() => {
         w.scrollBy(0, step);
         total += step;
@@ -49,9 +83,9 @@ async function autoScroll(page: import("playwright").Page): Promise<void> {
           w.scrollTo(0, 0);
           resolve();
         }
-      }, 80);
+      }, interval);
     });
-  });
+  }, dense ? { step: 250, interval: 60 } : { step: 600, interval: 80 });
 }
 
 /**
@@ -84,8 +118,9 @@ export async function renderPage(url: string, opts: RenderOptions): Promise<Rend
       ignoreHTTPSErrors: opts.insecureTLS,
     });
     const page = await context.newPage();
+    if (opts.deterministicRandom) await page.addInitScript(SEEDED_RANDOM_SNIPPET);
 
-    const resources = new Map<string, { contentType: string; body: Buffer }>();
+    const resources = new Map<string, RenderedResource>();
     const pending: Promise<void>[] = [];
     page.on("response", (resp) => {
       pending.push(
@@ -95,7 +130,11 @@ export async function renderPage(url: string, opts: RenderOptions): Promise<Rend
             if (req.resourceType() === "document") return; // the page HTML, not an asset
             const ct = resp.headers()["content-type"] ?? "";
             const body = await resp.body();
-            resources.set(resp.url().split("#")[0]!, { contentType: ct, body });
+            resources.set(resp.url().split("#")[0]!, {
+              contentType: ct,
+              body,
+              resourceType: req.resourceType(),
+            });
           } catch {
             /* streaming/redirect/opaque responses have no body — skip */
           }
@@ -104,7 +143,7 @@ export async function renderPage(url: string, opts: RenderOptions): Promise<Rend
     });
 
     await page.goto(url, { waitUntil: "networkidle", timeout: opts.timeoutMs });
-    await autoScroll(page).catch(() => {});
+    await autoScroll(page, opts.deterministicRandom).catch(() => {});
     await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
     await Promise.allSettled(pending);
 

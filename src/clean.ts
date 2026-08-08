@@ -84,12 +84,17 @@ export function removeJunk(
  *     stripped, these only ever pull dead bytes from the live host.
  * Also sanitises leftovers (inline on* handlers, javascript: hrefs) and drops
  * comments. Returns the number of elements removed.
+ *
+ * `keepJs` (keep-js mode) relaxes the script-related strips: scripts,
+ * noscript, and inline handlers survive so the page's own code can run offline.
+ * Network hints are still stripped — kept scripts are bundled locally, so the
+ * hints could only ever reach back to the live host.
  */
-export function stripStatic($: CheerioAPI): number {
+export function stripStatic($: CheerioAPI, opts?: { keepJs?: boolean }): number {
+  const keepJs = opts?.keepJs ?? false;
   const alwaysStrip = $(
     [
-      "script",
-      "noscript",
+      ...(keepJs ? [] : ["script", "noscript"]),
       "link[rel~='preconnect']",
       "link[rel~='dns-prefetch']",
       "link[rel~='modulepreload']",
@@ -102,15 +107,18 @@ export function stripStatic($: CheerioAPI): number {
   alwaysStrip.remove();
 
   // Strip leftovers that survive selector removal: inline on* handlers and
-  // dead javascript: hrefs (useless offline anyway).
-  $("*").each((_, el) => {
-    if (el.type !== "tag") return;
-    for (const attr of Object.keys(el.attribs ?? {})) {
-      if (attr.toLowerCase().startsWith("on")) $(el).removeAttr(attr);
-    }
-    const href = el.attribs?.["href"];
-    if (href && href.trim().toLowerCase().startsWith("javascript:")) $(el).attr("href", "#");
-  });
+  // dead javascript: hrefs (useless offline anyway). With keepJs both stay —
+  // they're part of the interactivity being preserved.
+  if (!keepJs) {
+    $("*").each((_, el) => {
+      if (el.type !== "tag") return;
+      for (const attr of Object.keys(el.attribs ?? {})) {
+        if (attr.toLowerCase().startsWith("on")) $(el).removeAttr(attr);
+      }
+      const href = el.attribs?.["href"];
+      if (href && href.trim().toLowerCase().startsWith("javascript:")) $(el).attr("href", "#");
+    });
+  }
 
   // Drop comments. (Provenance is recorded in manifest.json, not injected
   // into the page — the saved HTML stays faithful to the original.)

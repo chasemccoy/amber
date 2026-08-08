@@ -91,6 +91,7 @@ test("applyPlan removes junk and sanitises, leaving the original markup faithful
     removeSelectors: ["#ad"],
     media: [],
     tags: [],
+    preserveRuntime: false,
     notes: "",
     source: "test",
   };
@@ -120,6 +121,7 @@ test("applyPlan leaves the embed in place when media download fails", async () =
       },
     ],
     tags: [],
+    preserveRuntime: false,
     notes: "",
     source: "test",
   };
@@ -141,6 +143,7 @@ test("applyPlan removes elements whose id is an unescaped React useId selector",
     removeSelectors: ["#drawer_:R196:"],
     media: [],
     tags: [],
+    preserveRuntime: false,
     notes: "",
     source: "test",
   };
@@ -209,6 +212,7 @@ test("applyPlan always strips scripts, noscript, and JS/connection hints, even w
     removeSelectors: [], // deliberately empty — stripping must be unconditional
     media: [],
     tags: [],
+    preserveRuntime: false,
     notes: "",
     source: "test",
   };
@@ -273,6 +277,7 @@ test("applyPlan removes elements via a class selector with illegal CSS chars", a
     removeSelectors: [".drawer:R1:"],
     media: [],
     tags: [],
+    preserveRuntime: false,
     notes: "",
     source: "test",
   };

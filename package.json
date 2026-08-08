@@ -1,7 +1,7 @@
 {
   "name": "in-amber",
   "version": "0.5.0",
-  "description": "Save any web page as a clean, self-contained offline folder — deterministic capture, judgement by Claude.",
+  "description": "Save any web page as a clean, self-contained offline folder \u2014 deterministic capture, judgement by Claude.",
   "license": "MIT",
   "author": "Chase McCoy",
   "repository": {
@@ -57,16 +57,21 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "playwright": "^1.49.0"
+    "playwright": "^1.49.0",
+    "esbuild": "^0.28.1"
   },
   "peerDependenciesMeta": {
     "playwright": {
+      "optional": true
+    },
+    "esbuild": {
       "optional": true
     }
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "domhandler": "^6.0.1",
+    "esbuild": "^0.28.1",
     "playwright": "^1.49.0",
     "tsup": "^8.5.1",
     "tsx": "^4.19.0",
