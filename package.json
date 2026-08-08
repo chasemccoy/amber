@@ -1,7 +1,7 @@
 {
   "name": "in-amber",
-  "version": "0.5.0",
-  "description": "Save any web page as a clean, self-contained offline folder \u2014 deterministic capture, judgement by Claude.",
+  "version": "0.6.0",
+  "description": "Save any web page as a clean, self-contained offline folder — deterministic capture, judgement by Claude.",
   "license": "MIT",
   "author": "Chase McCoy",
   "repository": {
