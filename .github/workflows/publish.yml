@@ -35,6 +35,15 @@ jobs:
       # Trusted publishing needs a newer npm than Node 24 bundles
       - run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
+      # Fail BEFORE publishing if CHANGELOG.md has no section for this version —
+      # the GitHub release below sources its notes from it, and an empty release
+      # page is only discovered after npm has already shipped.
+      - run: |
+          VER="${GITHUB_REF_NAME#v}"
+          if ! awk -v ver="$VER" '$0 ~ "^## " ver "( |$)" {f=1; next} /^## / {f=0} f' CHANGELOG.md | grep -q '[^[:space:]]'; then
+            echo "::error::CHANGELOG.md has no entry for $VER — add a '## $VER' section, commit, retag."
+            exit 1
+          fi
       # prepublishOnly runs typecheck + test + build before the tarball is made.
       # access + provenance come from publishConfig in package.json.
       - run: npm publish
