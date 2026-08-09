@@ -162,22 +162,6 @@ it with `--keep-js`), Playwright, and esbuild (`npm i -g esbuild`).
     └── 20260102T090000Z/   # … with its own index.html + assets + manifest
 ```
 
-## The library
-
-The archive root gets a browsable **`index.html`** of its own — a table of
-everything you've saved, with a thumbnail, title, site, date, Claude's tags, a
-keep-js/static badge, version count, and size, plus a filter box. It's rebuilt
-after every archive (and by `amber index`, for after you prune folders by
-hand). Like everything else, it's derived state: the slug folders and their
-manifests are the database, the page is just a projection, and deleting it
-costs nothing.
-
-Tags are chosen for *filing*, not description — discipline-level, lowercase,
-spaces over hyphens — and every planning call sees the library's existing
-vocabulary so tagging converges on one folksonomy instead of coining synonyms
-per page. Disagree with a tag? Edit the archive's `manifest.json` and run
-`amber index`.
-
 ## History over time
 
 Re-archiving a URL keeps the old copy. The newest capture stays at `<slug>/`, and
