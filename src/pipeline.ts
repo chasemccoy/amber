@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { CheerioAPI } from "cheerio";
 import { Capturer } from "./capture.js";
-import { renderPage } from "./render.js";
+import { renderPage, thumbnailFromFile } from "./render.js";
 import { heuristicPlan, llmPlan, parsePlan } from "./planner.js";
 import { mediaTargets, removeJunk, stripStatic, swapMedia, type CleanReport } from "./clean.js";
 import {
@@ -17,6 +17,7 @@ import {
   type KeepJsReport,
 } from "./keepjs.js";
 import { commitSnapshot, hashSnapshotContent } from "./snapshot.js";
+import { libraryTags, updateLibraryIndex } from "./library.js";
 import type { CleanupPlan, CaptureOptions } from "./types.js";
 
 // Empty-when-JS-hasn't-run mount points for the common SPA frameworks.
@@ -127,7 +128,7 @@ async function resolvePlan(
   rawHtml: string,
   url: string,
   $: CheerioAPI,
-  opts: { useLLM: boolean; planPath?: string; model: string; verbose: boolean },
+  opts: { useLLM: boolean; planPath?: string; model: string; verbose: boolean; outRoot?: string },
 ): Promise<CleanupPlan> {
   const log = (m: string) => opts.verbose && console.log(m);
   if (opts.planPath) {
@@ -141,7 +142,15 @@ async function resolvePlan(
   if (opts.useLLM) {
     log("[2/4] Asking Claude for a cleanup plan");
     try {
-      return await llmPlan(rawHtml, url, opts.model);
+      // Tag convergence: hand the planner the library's current vocabulary and
+      // any owner-written guidance, so new tags file into the existing system.
+      let existingTags: string[] = [];
+      try {
+        existingTags = opts.outRoot ? libraryTags(opts.outRoot) : [];
+      } catch {
+        /* unreadable library — tag without vocabulary */
+      }
+      return await llmPlan(rawHtml, url, opts.model, undefined, { existingTags });
     } catch (err) {
       log(`      LLM plan failed (${err}); falling back to heuristics`);
       return heuristicPlan($);
@@ -163,6 +172,7 @@ export async function archiveUrl(url: string, opts: ArchiveOptions): Promise<Arc
     // first and only boots Chromium when the page looks client-rendered, so a
     // plain server-rendered page never pays the browser cost.
     let keepJs = opts.keepJs ?? false;
+    let thumbnail: Buffer | null = null;
     let cap = new Capturer(staging, {
       timeoutMs: opts.timeoutMs,
       insecureTLS: opts.insecureTLS,
@@ -174,6 +184,7 @@ export async function archiveUrl(url: string, opts: ArchiveOptions): Promise<Arc
         insecureTLS: opts.insecureTLS,
         deterministicRandom: keepJs,
       });
+      thumbnail = r.thumbnail ?? null;
       cap.loadRender(r);
     };
     let usedBackend: "fetch" | "playwright" = "fetch";
@@ -250,7 +261,7 @@ export async function archiveUrl(url: string, opts: ArchiveOptions): Promise<Arc
       }
     }
 
-    return await finishArchive(cap, url, outDir, { backend: usedBackend, backendMode: opts.backend }, { ...opts, keepJs }, plan);
+    return await finishArchive(cap, url, outDir, { backend: usedBackend, backendMode: opts.backend }, { ...opts, keepJs, thumbnail }, plan);
   } catch (err) {
     fs.rmSync(staging, { recursive: true, force: true });
     throw err;
@@ -323,7 +334,16 @@ async function finishArchive(
   url: string,
   outDir: string,
   provenance: { backend: string; backendMode: string },
-  opts: { useLLM: boolean; planPath?: string; model: string; verbose: boolean; overwrite?: boolean; keepJs?: boolean },
+  opts: {
+    useLLM: boolean;
+    planPath?: string;
+    model: string;
+    verbose: boolean;
+    overwrite?: boolean;
+    keepJs?: boolean;
+    /** Viewport screenshot from the live render, when a browser was used. */
+    thumbnail?: Buffer | null;
+  },
   plan: CleanupPlan,
 ): Promise<ArchiveResult> {
   const log = (m: string) => opts.verbose && console.log(m);
@@ -410,6 +430,14 @@ async function finishArchive(
   if (!keepJsReport?.singleFile) {
     fs.writeFileSync(path.join(staging, "index.html"), cap.$.html());
   }
+
+  // Library thumbnail: the live render's viewport when a browser was used,
+  // else a screenshot of the just-built archive itself (skipped silently
+  // without Playwright). Excluded from the content hash — screenshot bytes
+  // vary per render and must not defeat dedupe.
+  const thumb = opts.thumbnail ?? (await thumbnailFromFile(path.join(staging, "index.html")));
+  if (thumb) fs.writeFileSync(path.join(staging, "thumbnail.jpg"), thumb);
+
   const contentHash = stableHash ?? hashSnapshotContent(staging);
   const manifest = {
     sourceUrl: url,
@@ -433,6 +461,15 @@ async function finishArchive(
   if (!commit.changed) log(`Unchanged — kept existing snapshot at ${outDir}`);
   else if (commit.archivedTo) log(`Done -> ${path.join(outDir, "index.html")} (previous archived to ${commit.archivedTo})`);
   else log(`Done -> ${path.join(outDir, "index.html")}`);
+
+  // Refresh the browsable library index at the archive root. Derived entirely
+  // from the manifests on disk, so a failure here never costs an archive.
+  try {
+    const n = updateLibraryIndex(path.dirname(outDir));
+    log(`      library index updated (${n} page${n === 1 ? "" : "s"})`);
+  } catch (err) {
+    log(`      library index update failed: ${err}`);
+  }
 
   return {
     outDir,

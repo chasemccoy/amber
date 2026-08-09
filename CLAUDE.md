@@ -60,7 +60,17 @@ Two entry points share the same capture/clean code:
      then `swapMedia()` downloads embeds via yt-dlp and swaps them in.
      `applyPlan()` in `src/clean.ts` still composes swap→junk→strip in one call
      for tests/evals that clean an already-captured DOM.
-  4. **Package** — writes `index.html`, `plan.json`, `manifest.json`.
+  4. **Package** — writes `index.html`, `plan.json`, `manifest.json`, and a
+     `thumbnail.jpg` (live-render viewport when a browser ran, else a
+     screenshot of the staged archive via `thumbnailFromFile()`; excluded from
+     the content hash so dedupe still works). After commit, both entry points
+     (and agent mode) rebuild the **library index** — `src/library.ts` scans
+     the slug folders' manifests and writes a browsable `index.html` at the
+     archive root (`amber index` rebuilds it manually). Pure projection: the
+     folders are the database, no state file. Tagging is filing-oriented
+     (discipline-altitude, spaces not hyphens — rules live in the planner
+     prompt) and converges: `resolvePlan` feeds `libraryTags(outRoot)` into
+     every planning call so the model reuses the library's vocabulary.
 
   **Keep-js mode** (`src/keepjs.ts`) — preserves a page's own runtime when the
   experience *is* the JS (WebGL, scroll choreography). During the Playwright

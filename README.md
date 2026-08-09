@@ -117,11 +117,10 @@ The cleanup step uses Claude's judgement by defult, and sometimes Claude gets th
 Most pages read perfectly as static HTML, and stripping their scripts is what
 makes an archive private and permanent. But for some pages the experience *is*
 the JavaScript — a WebGL hero, scroll-driven film choreography, a generative
-art piece. A static snapshot of one of those is a blank or broken skeleton.
+art piece.
 
 For these, amber has **keep-js mode**. By default Claude decides per page: the
-plan carries a `preserveRuntime` judgement, and when it's true (and esbuild +
-Playwright are installed) the pipeline re-captures in keep-js mode
+plan carries a `preserveRuntime` judgement, and when it's true the pipeline re-captures in keep-js mode
 automatically. `--keep-js` forces it on; `--no-keep-js` forbids it.
 
 What it does:
@@ -130,8 +129,7 @@ What it does:
   scripts are still removed; the app bundle survives.
 - **Flattens module scripts** into one classic script (esbuild), because
   browsers refuse to load ES modules from a double-clicked `file://` page.
-- **Records the browsing session** during the render — every runtime-fetched
-  asset and API response — and replays it offline through a small shim that
+- **Records the browsing session** during the render and replays it offline through a small shim that
   patches `fetch`/`XMLHttpRequest` and remaps runtime-constructed asset URLs.
   Randomness is seeded identically at capture and replay, so pages that
   randomise at boot make the same choices. Frame sequences (`f_001.webp`,
@@ -157,11 +155,28 @@ it with `--keep-js`), Playwright, and esbuild (`npm i -g esbuild`).
 │   ├── images/             # every image, favicon, srcset entry
 │   ├── static/             # css, fonts
 │   └── media/              # videos/audio — self-hosted files + yt-dlp downloads
+├── thumbnail.jpg           # viewport screenshot, for the library index
 ├── plan.json               # the cleanup judgement that was applied (auditable, replayable)
 ├── manifest.json           # source URL, capture time, topical tags, asset list, errors, what was removed
 └── versions/               # older snapshots (only after you re-archive), each a full archive
     └── 20260102T090000Z/   # … with its own index.html + assets + manifest
 ```
+
+## The library
+
+The archive root gets a browsable **`index.html`** of its own — a table of
+everything you've saved, with a thumbnail, title, site, date, Claude's tags, a
+keep-js/static badge, version count, and size, plus a filter box. It's rebuilt
+after every archive (and by `amber index`, for after you prune folders by
+hand). Like everything else, it's derived state: the slug folders and their
+manifests are the database, the page is just a projection, and deleting it
+costs nothing.
+
+Tags are chosen for *filing*, not description — discipline-level, lowercase,
+spaces over hyphens — and every planning call sees the library's existing
+vocabulary so tagging converges on one folksonomy instead of coining synonyms
+per page. Disagree with a tag? Edit the archive's `manifest.json` and run
+`amber index`.
 
 ## History over time
 

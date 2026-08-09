@@ -17,6 +17,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import * as path from "node:path";
 import { parseArgs } from "node:util";
 import { archiveUrl, defaultArchiveDir } from "./pipeline.js";
 import { runDoctor } from "./doctor.js";
@@ -26,6 +27,7 @@ const USAGE =
   "usage: amber [options] <url>\n" +
   "       amber agent [options] <url>\n" +
   "       amber serve [options] <slug-or-path>\n" +
+  "       amber index [-o <dir>]\n" +
   "       amber doctor";
 
 const HELP = `amber — save a web page as a clean, self-contained offline folder
@@ -65,6 +67,8 @@ subcommands:
   serve <slug|path>  serve an archive over http://127.0.0.1 — needed for
                      --keep-js archives of WebGL-heavy sites (file:// blocks
                      canvas/WebGL use of local media; localhost doesn't)
+  index              rebuild the browsable library index (index.html at the
+                     archive root) — it's also refreshed after every archive
   doctor             check the environment: key, Playwright, yt-dlp, ffmpeg
 
 Re-archiving a URL keeps history: the previous capture rotates into
@@ -131,6 +135,37 @@ async function runServeCli(args: string[]): Promise<number> {
   return 0;
 }
 
+/** `amber index` — rebuild the library index at the archive root. */
+async function runIndexCli(args: string[]): Promise<number> {
+  let values;
+  try {
+    ({ values } = parseArgs({
+      args,
+      options: {
+        out: { type: "string", short: "o", default: defaultArchiveDir() },
+        help: { type: "boolean", short: "h", default: false },
+      },
+    }));
+  } catch (err) {
+    console.error(`error: ${(err as Error).message}\n\nusage: amber index [-o <dir>]`);
+    return 2;
+  }
+  if (values.help) {
+    console.log(
+      "amber index — rebuild the browsable library index (index.html at the archive root)\n\n" +
+        "usage: amber index [-o <dir>]\n\n" +
+        "The index is derived entirely from each archive's manifest.json and is\n" +
+        "refreshed automatically after every archive; run this after deleting or\n" +
+        "moving archives by hand.",
+    );
+    return 0;
+  }
+  const { updateLibraryIndex } = await import("./library.js");
+  const n = updateLibraryIndex(values.out!);
+  console.log(`Indexed ${n} archive${n === 1 ? "" : "s"} -> ${path.join(values.out!, "index.html")}`);
+  return 0;
+}
+
 /** `amber agent <url>` — the interactive-judgement escalation path. */
 async function runAgentCli(args: string[]): Promise<number> {
   let values, positionals;
@@ -176,6 +211,7 @@ async function main(): Promise<number> {
   if (process.argv[2] === "doctor") return runDoctor();
   if (process.argv[2] === "agent") return runAgentCli(process.argv.slice(3));
   if (process.argv[2] === "serve") return runServeCli(process.argv.slice(3));
+  if (process.argv[2] === "index") return runIndexCli(process.argv.slice(3));
 
   let values, positionals;
   try {

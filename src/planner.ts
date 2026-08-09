@@ -101,11 +101,23 @@ of the embed (videos: YouTube/Vimeo; audio players). For each, give a CSS select
 for the embed element and the canonical source URL a downloader (yt-dlp) can fetch \
 (e.g. the https://www.youtube.com/watch?v=... URL).
 
-5. TAGS — read the actual content and give 3-7 topical tags describing its subject \
-matter, so the saved page can be browsed and searched later. Tags should be \
-lowercase, specific to what the page is about (people, technologies, fields, \
-events, concepts), and concise (one to three words). Use the real topics, not \
-generic words like "article", "blog", "website", or the site's name.
+5. TAGS — file this page in a personal library. Give 3-5 lowercase tags at the \
+altitude a librarian would use: disciplines, fields, technologies, and enduring \
+concepts — how the library's OWNER would group saved pages, not how the page \
+describes itself.
+   - When a list of the library's existing tags is provided, PREFER reusing \
+them — but only when they genuinely fit the page's own subject; never force a \
+page into borrowed tags. Coin a new tag when nothing listed applies. A \
+library's tags are only useful when they converge.
+   - Do not adopt the page's own marketing or self-descriptive vocabulary.
+   - No person, company, or product names unless the page is substantially \
+ABOUT that person, company, or product.
+   - Prefer the general field over the specific tool (say "3d graphics", not \
+the engine's name) unless the page is specifically about that tool.
+   - Multi-word tags use spaces ("graphic design"), never hyphens — except \
+words that are themselves hyphenated ("e-commerce").
+   - Never use generic filler like "article", "blog", "website", or the \
+site's name.
 
 6. RUNTIME (preserveRuntime) — decide whether the page's PRESENTATION needs its \
 JavaScript running at view time. Most pages (articles, docs, blogs, news, \
@@ -147,11 +159,17 @@ const PlanSchema = z.object({
   notes: z.string().describe("Brief rationale for the human reviewer"),
 });
 
+export interface PlanContext {
+  /** The library's current tag vocabulary, most-used first (for convergence). */
+  existingTags?: string[];
+}
+
 export async function llmPlan(
   html: string,
   url: string,
   model = "claude-sonnet-4-6",
   maxHtmlChars = 400_000,
+  context: PlanContext = {},
 ): Promise<CleanupPlan> {
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
   const { zodOutputFormat } = await import("@anthropic-ai/sdk/helpers/zod");
@@ -159,13 +177,18 @@ export async function llmPlan(
   const truncated = html.slice(0, maxHtmlChars);
   const note = html.length <= maxHtmlChars ? "" : `\n\n[HTML truncated to ${maxHtmlChars} chars]`;
 
+  let extras = "";
+  if (context.existingTags?.length) {
+    extras += `\n\nThe library's existing tags, most-used first — prefer reusing these:\n${context.existingTags.slice(0, 150).join(", ")}`;
+  }
+
   const client = new Anthropic();
   const res = await client.messages.parse({
     model,
     max_tokens: 8000,
     thinking: { type: "adaptive" },
     system: SYSTEM,
-    messages: [{ role: "user", content: `Page URL: ${url}\n\nHTML:\n${truncated}${note}` }],
+    messages: [{ role: "user", content: `Page URL: ${url}${extras}\n\nHTML:\n${truncated}${note}` }],
     output_config: { format: zodOutputFormat(PlanSchema) },
   });
 

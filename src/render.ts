@@ -7,6 +7,7 @@
  * cookie-gated, etc.).
  */
 
+import { pathToFileURL } from "node:url";
 import { AmberError } from "./errors.js";
 
 export const USER_AGENT =
@@ -30,6 +31,8 @@ export interface RenderResult {
   baseUrl: string;
   /** url (without fragment) -> bytes the browser already downloaded. */
   resources: Map<string, RenderedResource>;
+  /** Viewport JPEG taken after the page settled — the library index thumbnail. */
+  thumbnail?: Buffer;
 }
 
 export interface RenderOptions {
@@ -149,8 +152,43 @@ export async function renderPage(url: string, opts: RenderOptions): Promise<Rend
 
     const html = await page.content();
     const finalUrl = page.url();
-    return { html, finalUrl, baseUrl: finalUrl, resources };
+    // Thumbnail for the library index: the settled top-of-page viewport. A
+    // failure here (crashed renderer, teardown race) must never cost a capture.
+    let thumbnail: Buffer | undefined;
+    try {
+      thumbnail = await page.screenshot({ type: "jpeg", quality: 60 });
+    } catch {
+      /* no thumbnail — the library shows a blank cell */
+    }
+    return { html, finalUrl, baseUrl: finalUrl, resources, thumbnail };
   } finally {
     await browser.close();
+  }
+}
+
+/**
+ * Screenshot an already-built archive's index.html — the thumbnail fallback
+ * for captures that never opened a browser (static fetch, extension DOM).
+ * Returns null when Playwright isn't installed or the render fails: the
+ * library index simply shows no preview.
+ */
+export async function thumbnailFromFile(indexPath: string, timeoutMs = 20000): Promise<Buffer | null> {
+  let chromium: typeof import("playwright").chromium;
+  try {
+    chromium = (await import("playwright")).chromium;
+  } catch {
+    return null;
+  }
+  let browser: import("playwright").Browser | null = null;
+  try {
+    browser = await chromium.launch();
+    const page = await browser.newPage();
+    await page.goto(pathToFileURL(indexPath).href, { waitUntil: "load", timeout: timeoutMs });
+    await page.waitForTimeout(500); // let fonts/first paint settle
+    return await page.screenshot({ type: "jpeg", quality: 60 });
+  } catch {
+    return null;
+  } finally {
+    await browser?.close().catch(() => {});
   }
 }

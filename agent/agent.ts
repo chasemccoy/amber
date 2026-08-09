@@ -27,6 +27,7 @@ import { downloadMedia, mediaElementHtml } from "../src/media.js";
 import { selectTolerant } from "../src/clean.js";
 import { normalizeTags } from "../src/planner.js";
 import { slugifyUrl } from "../src/pipeline.js";
+import { updateLibraryIndex } from "../src/library.js";
 import { commitSnapshot, hashSnapshotContent } from "../src/snapshot.js";
 
 export interface Ctx {
@@ -266,17 +267,28 @@ export async function runAgent(
     console.log(`[capture] rendering + localising assets for ${url}`);
     const insecure = process.env.AMBER_INSECURE_TLS === "1";
     const cap = new Capturer(staging, { timeoutMs: 45000, insecureTLS: insecure });
-    cap.loadRender(await renderPage(url, { timeoutMs: 45000, insecureTLS: insecure }));
+    const render = await renderPage(url, { timeoutMs: 45000, insecureTLS: insecure });
+    cap.loadRender(render);
     await cap.captureAssets();
     console.log(`[capture] ${cap.assets.length} assets, ${cap.errors.length} errors`);
 
     const { ctx } = await runAgentLoop(cap.$, url, { outDir: staging, model, onLog: (m) => console.log(m) });
     if (!ctx.finalized) throw new Error("agent finished without calling finalize — nothing to commit");
 
+    // Library thumbnail from the render's viewport (excluded from the content hash).
+    if (render.thumbnail) fs.writeFileSync(path.join(staging, "thumbnail.jpg"), render.thumbnail);
+
     const commit = commitSnapshot(staging, outDir, { overwrite: opts.overwrite });
     if (!commit.changed) console.log(`[done]   unchanged — kept existing snapshot at ${outDir}`);
     else if (commit.archivedTo) console.log(`[done]   ${outDir}/index.html (previous archived to ${commit.archivedTo})`);
     else console.log(`[done]   ${outDir}/index.html`);
+
+    // Same browsable index the pipeline maintains; never fatal.
+    try {
+      updateLibraryIndex(outRoot);
+    } catch (err) {
+      console.log(`[warn]   library index update failed: ${err}`);
+    }
     return outDir;
   } catch (err) {
     fs.rmSync(staging, { recursive: true, force: true });

@@ -25,7 +25,7 @@ import * as crypto from "node:crypto";
 /** Top-level names under a slug dir that are not part of a single snapshot. */
 const RESERVED = new Set(["versions"]);
 /** Metadata files excluded from the content hash (timestamps / nondeterministic). */
-const UNHASHED = new Set(["manifest.json", "plan.json"]);
+const UNHASHED = new Set(["manifest.json", "plan.json", "thumbnail.jpg"]);
 
 /**
  * Hash a snapshot's *content* — `index.html` plus every asset byte — ignoring
