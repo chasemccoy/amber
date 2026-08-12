@@ -164,6 +164,25 @@ export interface PlanContext {
   existingTags?: string[];
 }
 
+/**
+ * Opt-in cache visibility (`AMBER_DEBUG_CACHE=1`). Prompt caching fails
+ * silently: a prefix under the model's minimum (1024 tokens on
+ * claude-sonnet-4-6) simply isn't cached, with no error — so the only way to
+ * know a breakpoint still works after editing a prompt is to look. `read > 0`
+ * on a second run within the 5-minute TTL means it does. Both call sites clear
+ * the minimum today (planner prefix 1795, agent first turn 1674), but the
+ * agent's margin comes from its tool schemas, not its 419-token system prompt.
+ */
+export function reportCacheUsage(
+  label: string,
+  usage: { cache_creation_input_tokens?: number | null; cache_read_input_tokens?: number | null; input_tokens?: number | null } | undefined,
+): void {
+  if (process.env.AMBER_DEBUG_CACHE !== "1" || !usage) return;
+  const write = usage.cache_creation_input_tokens ?? 0;
+  const read = usage.cache_read_input_tokens ?? 0;
+  console.error(`[cache]  ${label}: write=${write} read=${read} uncached=${usage.input_tokens ?? 0}`);
+}
+
 export async function llmPlan(
   html: string,
   url: string,
@@ -187,10 +206,17 @@ export async function llmPlan(
     model,
     max_tokens: 8000,
     thinking: { type: "adaptive" },
-    system: SYSTEM,
+    // Cache the system prompt only. The breakpoint MUST stay here: caching is a
+    // prefix match, and everything volatile (library tags, URL, page HTML) lives
+    // in the user message after it. Do NOT switch to top-level `cache_control` —
+    // that auto-places the marker on the last cacheable block, i.e. the ~100k
+    // tokens of unique-per-page HTML, writing a cache entry every run that is
+    // never read (a 1.25x premium on the biggest part of the request).
+    system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: `Page URL: ${url}${extras}\n\nHTML:\n${truncated}${note}` }],
     output_config: { format: zodOutputFormat(PlanSchema) },
   });
+  reportCacheUsage("plan", res.usage);
 
   const p = res.parsed_output;
   if (!p) throw new Error("model returned no parseable plan");

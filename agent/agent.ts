@@ -25,7 +25,7 @@ import { Capturer } from "../src/capture.js";
 import { renderPage } from "../src/render.js";
 import { downloadMedia, mediaElementHtml } from "../src/media.js";
 import { selectTolerant } from "../src/clean.js";
-import { normalizeTags } from "../src/planner.js";
+import { normalizeTags, reportCacheUsage } from "../src/planner.js";
 import { slugifyUrl } from "../src/pipeline.js";
 import { updateLibraryIndex } from "../src/library.js";
 import { commitSnapshot, hashSnapshotContent } from "../src/snapshot.js";
@@ -233,13 +233,22 @@ export async function runAgentLoop(
     model: opts.model ?? "claude-sonnet-4-6",
     max_tokens: 8000,
     thinking: { type: "adaptive" },
+    // Every turn re-sends the whole conversation — system + 7 tool schemas +
+    // every prior tool result (DOM outlines and `inspect` dumps are the bulk).
+    // Top-level cache_control auto-places the breakpoint on the last cacheable
+    // block, so each turn caches the prefix the next turn reads back. This is
+    // the opposite of the planner, where the tail is unique per page and the
+    // breakpoint has to be pinned to the system block instead.
+    cache_control: { type: "ephemeral" },
     system: SYSTEM,
     tools: buildTools(ctx),
     messages: [{ role: "user", content: `Archive this page: ${url}` }],
   });
 
   const toolCalls: AgentLoopResult["toolCalls"] = [];
+  let turn = 0;
   for await (const message of runner) {
+    reportCacheUsage(`agent turn ${++turn}`, message.usage);
     for (const block of message.content) {
       if (block.type === "text" && block.text.trim()) opts.onLog?.(`[claude] ${block.text.trim()}`);
       else if (block.type === "tool_use") {

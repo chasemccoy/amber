@@ -167,6 +167,21 @@ and provenance requires the GitHub repo to stay public. Requires Node ≥ 24.
   `@anthropic-ai/sdk` ≥ 0.104 **and Zod 4** — Zod 3 produces a wall of type
   errors. cheerio's element type comes from `domhandler`, not `cheerio`.
 - Model id is `claude-sonnet-4-6` (overridable with `--model` or `AMBER_MODEL`).
+- **Prompt caching breakpoints differ by entry point, on purpose.** Caching is a
+  prefix match, so the marker goes wherever the *stable* prefix ends. The
+  planner pins it to the system block (`system: [{...cache_control}]`) because
+  its tail is up to 400k chars of unique-per-page HTML — top-level
+  `cache_control` there would cache that HTML on every run and never read it.
+  The agent does the opposite: top-level `cache_control` lets the breakpoint
+  travel with the growing tool-runner conversation, which is where its spend
+  is. `AMBER_DEBUG_CACHE=1` prints per-call write/read/uncached token counts
+  (`reportCacheUsage` in planner.ts) — caching fails silently below the model's
+  1024-token minimum, so verify rather than assume after touching either
+  prompt. Measured on claude-sonnet-4-6: the planner's cached prefix is 1795
+  tokens (the output schema renders ahead of `system`, so the 1065-token system
+  prompt is not carrying it alone) and the agent's first turn writes 1674.
+  Both clear the minimum, but the agent's *system prompt alone* is only 419 —
+  it qualifies solely because the tool schemas sit in the same prefix.
 - The plan is a first-class artifact: `--plan plan.json` replays a saved plan;
   `--no-llm` forces heuristics; `--static` / `--playwright` force a backend.
 - Env: `ANTHROPIC_API_KEY` (plan/agent), `AMBER_INSECURE_TLS=1` (trusted MITM
