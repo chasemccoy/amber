@@ -172,6 +172,23 @@ function moveSnapshotInto(dir: string, dest: string): void {
   }
 }
 
+/** Delete a snapshot's files, keeping the directory itself (and its versions/). */
+function clearSnapshot(dir: string): void {
+  for (const name of fs.readdirSync(dir)) {
+    if (RESERVED.has(name)) continue;
+    fs.rmSync(path.join(dir, name), { recursive: true, force: true });
+  }
+}
+
+/** Move everything in `stagingDir` into `dest` (created if missing), then drop the emptied staging dir. */
+function moveSnapshotContents(stagingDir: string, dest: string): void {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const name of fs.readdirSync(stagingDir)) {
+    fs.renameSync(path.join(stagingDir, name), path.join(dest, name));
+  }
+  fs.rmSync(stagingDir, { recursive: true, force: true });
+}
+
 /**
  * Promote a freshly-built snapshot in `stagingDir` to the live archive at
  * `outDir`, rotating the previous latest into `versions/`. Always consumes
@@ -203,15 +220,13 @@ export function commitSnapshot(stagingDir: string, outDir: string, opts: CommitO
       const id = versionId(effectiveDate(staged), stagedManifest);
       const exact = path.join(outDir, "versions", id);
       if (opts.overwrite) {
-        fs.mkdirSync(path.dirname(exact), { recursive: true });
-        // Swap, don't delete-then-recreate: with the version folder open in
-        // Finder, deleting it and creating a same-named one seconds later
-        // left an empty "<id> 2" twin behind (macOS keeps the old node).
-        const old = `${exact}.amber-old`;
-        fs.rmSync(old, { recursive: true, force: true });
-        if (fs.existsSync(exact)) fs.renameSync(exact, old);
-        fs.renameSync(stagingDir, exact);
-        fs.rmSync(old, { recursive: true, force: true });
+        // Replace the CONTENTS and keep the directory node — the same way the
+        // root is overwritten. Deleting a folder that iCloud Drive (Desktop &
+        // Documents sync) hasn't reconciled yet gets it resurrected as an
+        // empty "<id> 2" twin, whether it was deleted outright or renamed
+        // aside first. Files replaced in place don't trip it.
+        if (fs.existsSync(exact)) clearSnapshot(exact);
+        moveSnapshotContents(stagingDir, exact);
         return { outDir, changed: true, archivedTo: null, filedAs: exact, contentHash };
       }
       // The same historical moment captured twice with identical content is
@@ -240,17 +255,10 @@ export function commitSnapshot(stagingDir: string, outDir: string, opts: CommitO
     archivedTo = uniqueVersionDir(outDir, effectiveDate(prev));
     moveSnapshotInto(outDir, archivedTo); // rotate current latest into versions/
   } else if (hasLatest) {
-    // --overwrite: discard the current latest, leave versions/ untouched.
-    for (const name of fs.readdirSync(outDir)) {
-      if (RESERVED.has(name)) continue;
-      fs.rmSync(path.join(outDir, name), { recursive: true, force: true });
-    }
+    clearSnapshot(outDir); // --overwrite: discard the current latest, leave versions/ untouched.
   }
 
   // Promote the staged build into the (now-cleared) root.
-  for (const name of fs.readdirSync(stagingDir)) {
-    fs.renameSync(path.join(stagingDir, name), path.join(outDir, name));
-  }
-  fs.rmSync(stagingDir, { recursive: true, force: true });
+  moveSnapshotContents(stagingDir, outDir);
   return { outDir, changed: true, archivedTo, filedAs: null, contentHash };
 }

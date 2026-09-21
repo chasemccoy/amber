@@ -180,10 +180,11 @@ reading each snapshot's `manifest.json`. Re-archiving identical content at the
 same point on the timeline is skipped (compared via `manifest.contentHash`, a
 sha256 of `index.html` + asset bytes that ignores `manifest.json`/`plan.json`).
 `--overwrite` replaces the latest in place without rotating it into
-`versions/` (on a backfill: replaces that version, swapped in by rename — a
-delete-then-recreate left an empty "<id> 2" twin under iCloud-synced
-Documents). Both entry points share this: the pipeline via `finishArchive()`,
-the agent via `runAgent()`.
+`versions/` (on a backfill: replaces that version's CONTENTS, keeping the
+directory node — under iCloud-synced Documents, deleting the folder, or
+renaming it aside and then deleting it, gets it resurrected as an empty
+"<id> 2" twin). Both entry points share this: the pipeline via
+`finishArchive()`, the agent via `runAgent()`.
 
 ## Packaging (npm)
 

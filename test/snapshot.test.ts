@@ -242,6 +242,8 @@ test("commitSnapshot --overwrite on an older snapshot replaces THAT version, nev
   const first = path.join(root, "first");
   writeSnapshot(first, { html: "<p>2010 static</p>", capturedAt: "2026-09-20T12:01:00.000Z", snapshotAt: "2010-04-30T14:36:57.000Z" });
   commitSnapshot(first, outDir);
+  const versionDir = path.join(outDir, "versions", "20100430T143657Z");
+  const ino = fs.statSync(versionDir).ino;
 
   // Re-run of the same moment (e.g. now with keep-js) with --overwrite.
   const redo = path.join(root, "redo");
@@ -249,7 +251,10 @@ test("commitSnapshot --overwrite on an older snapshot replaces THAT version, nev
   const res = commitSnapshot(redo, outDir, { overwrite: true });
 
   assert.equal(res.changed, true);
-  assert.equal(res.filedAs, path.join(outDir, "versions", "20100430T143657Z"));
+  assert.equal(res.filedAs, versionDir);
+  // The folder itself must survive: iCloud Drive resurrects a deleted one as
+  // an empty "<id> 2" twin.
+  assert.equal(fs.statSync(versionDir).ino, ino, "contents replaced in place, directory node kept");
   assert.match(fs.readFileSync(path.join(outDir, "index.html"), "utf8"), /2026/, "root untouched");
   assert.match(fs.readFileSync(path.join(res.filedAs!, "index.html"), "utf8"), /keep-js/, "the version was replaced");
   assert.deepEqual(fs.readdirSync(path.join(outDir, "versions")), ["20100430T143657Z"], "no -2 twin");

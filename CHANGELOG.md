@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.1 — 2026-09-20
+
+- `--overwrite` on a historical version now replaces the folder's *contents*
+  and keeps the directory itself (the way the root has always been
+  overwritten). 0.8.0's rename-aside-then-delete still left an empty
+  `<id> 2` twin behind when `~/Documents` is synced by iCloud Drive: any
+  deletion of a folder the sync hasn't reconciled yet gets it resurrected.
+
 ## 0.8.0 — 2026-09-20
 
 - **Historical versions via the Wayback Machine.** `amber --at 2009-06 <url>`
