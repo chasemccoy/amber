@@ -10,6 +10,9 @@
  *   - blob:/data: fetch passthrough (apps fetch blobs they just created)
  *   - fail-closed networking (unrecorded http(s) loads must NOT hit the web)
  *   - <a href> protection (fail-closing anchors would destroy links)
+ *   - inline-style url() and document.write'd loads (evernote.com 2010: a
+ *     jQuery carousel sets root-relative backgrounds; CDN jQuery and
+ *     analytics arrive via document.write)
  *   - history.pushState fallback (SPA routers throw on file:// and can
  *     hard-navigate away)
  *   - seeded Math.random parity between render and replay
@@ -54,6 +57,7 @@ async function buildShim(): Promise<{ shimSrc: string; replayJson: string }> {
 const ASSET_MAP_JSON = JSON.stringify({
   "https://example.com/img/pic.png": "assets/images/pic-abc.png",
   "https://example.com/films/1536/f_010.webp": "assets/images/f_010-abc.webp",
+  "https://cdn.example.net/lib/jquery.min.js": "assets/static/jquery.min-abc.js",
 });
 
 interface Sandbox {
@@ -61,10 +65,14 @@ interface Sandbox {
 }
 
 /** Minimal DOM realm for the shim: document, location, history, elements. */
-function runShim(shimSrc: string, replayJson: string, opts?: { href?: string; realFetch?: (...a: any[]) => any }) {
+function runShim(
+  shimSrc: string,
+  replayJson: string,
+  opts?: { href?: string; realFetch?: (...a: any[]) => any; assetMap?: boolean },
+) {
   const els: Record<string, { textContent: string }> = {
     "amber-replay-data": { textContent: replayJson },
-    "amber-asset-map": { textContent: ASSET_MAP_JSON },
+    ...(opts?.assetMap === false ? {} : { "amber-asset-map": { textContent: ASSET_MAP_JSON } }),
   };
   const historyCalls: Array<{ fn: string; url: any }> = [];
 
@@ -109,8 +117,38 @@ function runShim(shimSrc: string, replayJson: string, opts?: { href?: string; re
     }
   }
 
+  const written: string[] = [];
+  // Chromium-shaped: setProperty/getPropertyValue/cssText are real members,
+  // the camelCase properties are NOT (a named-property interceptor serves
+  // them), so the shim has to define its own accessors for those.
+  class FakeStyle {
+    props: Record<string, string> = {};
+    _cssText = "";
+    setProperty(name: string, value: string) {
+      this.props[name] = value;
+    }
+    getPropertyValue(name: string) {
+      return this.props[name] ?? "";
+    }
+    get cssText() {
+      return this._cssText;
+    }
+    set cssText(v: string) {
+      this._cssText = v;
+    }
+  }
+
   const sandbox: Sandbox = {
-    document: { getElementById: (id: string) => els[id] ?? null },
+    document: {
+      getElementById: (id: string) => els[id] ?? null,
+      write(...parts: string[]) {
+        written.push(parts.join(""));
+      },
+      writeln(...parts: string[]) {
+        written.push(parts.join("") + "\n");
+      },
+    },
+    CSSStyleDeclaration: FakeStyle,
     location: { href: opts?.href ?? "file:///Users/t/archives/slug/index.html" },
     navigator: {},
     history: {
@@ -145,6 +183,7 @@ function runShim(shimSrc: string, replayJson: string, opts?: { href?: string; re
     HTMLImageElement: withSrc("IMG"),
     HTMLMediaElement: withSrc("AUDIO"),
     HTMLSourceElement: withSrc("SOURCE"),
+    HTMLScriptElement: withSrc("SCRIPT"),
     Math: { imul: Math.imul, random: Math.random }, // shadow — never mutate host Math
     Object,
   };
@@ -184,6 +223,8 @@ function runShim(shimSrc: string, replayJson: string, opts?: { href?: string; re
   sandbox.self = sandbox;
   sandbox.fetch = opts?.realFetch ?? (() => Promise.resolve("REAL-FETCH"));
   sandbox.__historyCalls = historyCalls;
+  sandbox.__written = written;
+  sandbox.__els = els;
 
   vm.createContext(sandbox);
   vm.runInContext(shimSrc, sandbox);
@@ -287,6 +328,96 @@ test("shim remaps runtime-set element sources through the asset map", async () =
   const img4 = new sb.HTMLImageElement();
   img4.src = "assets/images/already-local.png";
   assert.equal(img4._src, "assets/images/already-local.png");
+
+  // Runtime-injected scripts too (evernote 2010: a tracker's loader created
+  // <script src="http://t.tellapart.com/tpv?…"> — that must not go out).
+  const lib = new sb.HTMLScriptElement();
+  lib.src = "https://cdn.example.net/lib/jquery.min.js";
+  assert.equal(lib._src, "assets/static/jquery.min-abc.js");
+  const tpv = new sb.HTMLScriptElement();
+  tpv.src = "http://t.tellapart.com/tpv?aid=x";
+  assert.equal(tpv._src, "data:,");
+});
+
+test("shim never caches a missing asset map (head scripts load before it is parsed)", async () => {
+  const { shimSrc, replayJson } = await buildShim();
+  const sb = runShim(shimSrc, replayJson, { assetMap: false });
+
+  // evernote 2010 regression: Google's loader (in <head>) document.write'd
+  // jQuery before the map element existed; the {} miss got cached and every
+  // later lookup — the whole carousel — failed closed.
+  const early = new sb.HTMLImageElement();
+  early.src = "https://example.com/img/pic.png";
+  assert.equal(early._src, "data:,", "before the map exists: fail closed");
+
+  sb.__els["amber-asset-map"] = { textContent: ASSET_MAP_JSON };
+  const late = new sb.HTMLImageElement();
+  late.src = "https://example.com/img/pic.png";
+  assert.equal(late._src, "assets/images/pic-abc.png", "the miss was not cached");
+});
+
+test("shim remaps url() in runtime-set inline styles", async () => {
+  const { shimSrc, replayJson } = await buildShim();
+  const sb = runShim(shimSrc, replayJson);
+
+  // evernote 2010 regression: jQuery's .css() assigns el.style.background =
+  // 'url(/about/…/slide_background.gif) …' — root-relative, which on file://
+  // resolves to the filesystem root. Chromium has no prototype accessor for
+  // the camelCase properties, so the shim defines its own.
+  const st = new sb.CSSStyleDeclaration();
+  st.background = 'url("/img/pic.png") 0px -1px no-repeat';
+  assert.equal(st.props["background"], 'url("assets/images/pic-abc.png") 0px -1px no-repeat');
+  assert.equal(st.background, 'url("assets/images/pic-abc.png") 0px -1px no-repeat', "getter reads back through getPropertyValue");
+  st.backgroundImage = "url(/img/pic.png)";
+  assert.equal(st.props["background-image"], "url(assets/images/pic-abc.png)");
+
+  // setProperty and cssText (a real accessor everywhere) are covered too.
+  st.setProperty("background-image", "url('/img/pic.png')");
+  assert.equal(st.props["background-image"], "url('assets/images/pic-abc.png')");
+  st.cssText = "color: red; background: url(/img/pic.png)";
+  assert.equal(st._cssText, "color: red; background: url(assets/images/pic-abc.png)");
+
+  // Fail closed: an unrecorded http(s) url() becomes inert, never a network hit.
+  st.backgroundImage = "url(https://tracker.example/pixel.gif)";
+  assert.equal(st.props["background-image"], "url(data:,)");
+
+  // Values without url() and non-strings pass through untouched.
+  st.background = "red";
+  assert.equal(st.props["background"], "red");
+  st.setProperty("width", 10 as any);
+  assert.equal(st.props["width"], 10 as any);
+
+  // setAttribute('style', …) is the same surface by another door.
+  const el = new sb.Element();
+  el.setAttribute("style", "background-image: url(/img/pic.png)");
+  assert.equal(el.attrs["style"], "background-image: url(assets/images/pic-abc.png)");
+});
+
+test("shim routes document.write'd loads through the asset map", async () => {
+  const { shimSrc, replayJson } = await buildShim();
+  const sb = runShim(shimSrc, replayJson);
+
+  // evernote 2010: Google's loader document.write's a CDN jQuery, GA writes
+  // ga.js — the parser fetches those from the network, past every src patch.
+  sb.document.write('<script src="https://cdn.example.net/lib/jquery.min.js" type="text/javascript"></script>');
+  assert.equal(
+    sb.__written[0],
+    '<script src="assets/static/jquery.min-abc.js" type="text/javascript"></script>',
+  );
+
+  // Unrecorded loads fail closed; entity-escaped query strings still match.
+  sb.document.write("<script type='text/javascript' src='http://www.google-analytics.com/ga.js'></script>");
+  assert.equal(sb.__written[1], "<script type='text/javascript' src='data:,'></script>");
+  sb.document.writeln('<img src="https://example.com/img/pic.png?a=1&amp;b=2">');
+  assert.equal(sb.__written[2], '<img src="assets/images/pic-abc.png">\n');
+
+  // Arguments are one document — a tag split across them still rewrites —
+  // and anchors are not loads.
+  sb.document.write('<a href="https://example.com/page">x</a><script src="', "https://cdn.example.net/lib/jquery.min.js", '"></script>');
+  assert.equal(
+    sb.__written[3],
+    '<a href="https://example.com/page">x</a><script src="assets/static/jquery.min-abc.js"></script>',
+  );
 });
 
 test("shim setAttribute remaps loads but never touches <a href>", async () => {

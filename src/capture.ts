@@ -12,7 +12,62 @@ import * as cheerio from "cheerio";
 import type { CheerioAPI } from "cheerio";
 import type { Element } from "domhandler";
 import { USER_AGENT, type RenderResult, type RenderedResource } from "./render.js";
+import { decodeCss, decodeHtml } from "./charset.js";
 import type { Asset } from "./types.js";
+
+export interface RetryPolicy {
+  attempts: number;
+  /** First wait; doubles each retry (with jitter), capped at 30s. */
+  baseDelayMs: number;
+}
+
+/**
+ * `fetch` with a polite retry: transient network errors (connection refused,
+ * reset, timeout — the Wayback Machine throttles at the TCP layer, never with
+ * a 429) and 429/503/502/504 responses, honouring Retry-After when present.
+ * A non-retryable status is returned as-is; a deterministic failure (bad
+ * URL, redirect loop) is thrown at once rather than replayed N times.
+ */
+export async function fetchRetrying(
+  url: string,
+  init: RequestInit,
+  policy: RetryPolicy = { attempts: 3, baseDelayMs: 1000 },
+): Promise<Response> {
+  const RETRYABLE = new Set([429, 502, 503, 504]);
+  const backoff = (attempt: number) =>
+    Math.min(policy.baseDelayMs * 2 ** (attempt - 1), 30_000) * (0.75 + Math.random() * 0.5);
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= policy.attempts; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, init);
+    } catch (err) {
+      lastErr = err;
+      if (attempt === policy.attempts || !isTransient(err)) throw err;
+      await sleep(backoff(attempt));
+      continue;
+    }
+    if (!RETRYABLE.has(res.status) || attempt === policy.attempts) return res;
+    const retryAfter = Number(res.headers.get("retry-after"));
+    await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter, 30) * 1000 : backoff(attempt));
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+// undici wraps everything in `TypeError: fetch failed` with the real reason
+// in `cause`; only these are the network being flaky rather than the request
+// being wrong. Unknown causes are retried — the cost of a spare attempt is
+// lower than giving up on a throttled host.
+const DETERMINISTIC_FETCH_ERROR = /redirect count exceeded|invalid url|unsupported|not allowed|ERR_INVALID|aborted/i;
+function isTransient(err: unknown): boolean {
+  const cause = (err as { cause?: { code?: string; message?: string } })?.cause;
+  const text = `${(err as Error)?.name ?? ""} ${(err as Error)?.message ?? ""} ${cause?.code ?? ""} ${cause?.message ?? ""}`;
+  return !DETERMINISTIC_FETCH_ERROR.test(text);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 const EXT_BY_CTYPE: Record<string, string> = {
   "text/css": ".css",
@@ -99,7 +154,23 @@ export class Capturer {
 
   constructor(
     readonly rootDir: string,
-    private readonly opts: { timeoutMs: number; insecureTLS: boolean; keepScripts?: boolean },
+    private readonly opts: {
+      timeoutMs: number;
+      insecureTLS: boolean;
+      keepScripts?: boolean;
+      /**
+       * Fetch every asset THROUGH another URL (the Wayback Machine, at a
+       * timestamp). Assets stay keyed and named by their original URL — only
+       * the wire request is redirected.
+       */
+      resolveUrl?: (absUrl: string) => string;
+      /** Override the browser-like default UA (e.g. identify to archive.org). */
+      userAgent?: string;
+      /** Pause before each network fetch (politeness for rate-limited hosts). */
+      requestDelayMs?: number;
+      /** Retry policy for asset fetches. */
+      retry?: RetryPolicy;
+    },
   ) {}
 
   /** The render's recorded responses — keep-js needs them for bundling/replay. */
@@ -126,9 +197,10 @@ export class Capturer {
 
   /** Static backend: fetch the page over HTTP, no browser. */
   async fetchPage(url: string): Promise<void> {
-    const res = await fetch(url, { headers: { "User-Agent": USER_AGENT }, redirect: "follow" });
+    const res = await fetchRetrying(url, { headers: { "User-Agent": this.opts.userAgent ?? USER_AGENT }, redirect: "follow" });
     if (!res.ok) throw new Error(`fetch ${url} -> HTTP ${res.status}`);
-    const html = await res.text();
+    // Decode by the declared charset, not res.text()'s unconditional UTF-8.
+    const html = decodeHtml(Buffer.from(await res.arrayBuffer()), res.headers.get("content-type"));
     this.$ = cheerio.load(html);
     this.finalUrl = res.url || url;
     this.applyBaseTag(this.finalUrl);
@@ -151,7 +223,9 @@ export class Capturer {
   private async getBytes(absUrl: string): Promise<{ contentType: string; body: Buffer }> {
     const cached = this.prefetched.get(absUrl);
     if (cached) return cached;
-    const res = await fetch(absUrl, { headers: { "User-Agent": USER_AGENT } });
+    const wire = this.opts.resolveUrl ? this.opts.resolveUrl(absUrl) : absUrl;
+    if (this.opts.requestDelayMs) await sleep(this.opts.requestDelayMs);
+    const res = await fetchRetrying(wire, { headers: { "User-Agent": this.opts.userAgent ?? USER_AGENT } }, this.opts.retry);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body = Buffer.from(await res.arrayBuffer());
     return { contentType: res.headers.get("content-type") ?? "", body };
@@ -185,7 +259,7 @@ export class Capturer {
     this.assets.push(asset);
 
     if (got.contentType.toLowerCase().includes("css") || absUrl.toLowerCase().endsWith(".css")) {
-      await this.rewriteCssFile(abs, absUrl);
+      await this.rewriteCssFile(abs, absUrl, got.contentType);
     }
     return asset;
   }
@@ -199,9 +273,11 @@ export class Capturer {
     return path.relative(fromDir, target).split(path.sep).join("/");
   }
 
-  private async rewriteCssFile(cssAbs: string, cssUrl: string): Promise<void> {
+  private async rewriteCssFile(cssAbs: string, cssUrl: string, contentType: string): Promise<void> {
     const cssRel = path.relative(this.rootDir, cssAbs).split(path.sep).join("/");
-    let css = fs.readFileSync(cssAbs, "utf8");
+    // Decoded by the sheet's own charset rules and written back as UTF-8, to
+    // match the document it belongs to (re-declared UTF-8 by finishArchive).
+    let css = decodeCss(fs.readFileSync(cssAbs), contentType);
     const replacements: Array<{ match: string; ref: string }> = [];
     for (const m of css.matchAll(CSS_URL_RE)) {
       const raw = m[2]!.trim();

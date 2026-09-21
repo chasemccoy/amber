@@ -16,6 +16,14 @@
  * Re-archiving identical content is skipped (the staged build is discarded),
  * compared by a content hash that ignores metadata files. `--overwrite` replaces
  * the latest in place without rotating it into `versions/`.
+ *
+ * "When" a snapshot is from is its EFFECTIVE date: `snapshotAt` when the
+ * capture came from the Wayback Machine (the historical timestamp), else
+ * `capturedAt` (the run time). The root always holds the newest effective
+ * date — so a Wayback capture older than the current latest is filed straight
+ * into `versions/` and the root is left alone. That's what lets a live
+ * capture from today and Wayback captures from years ago form one ordered
+ * timeline under a single slug.
  */
 
 import * as fs from "node:fs";
@@ -73,12 +81,31 @@ export interface CommitResult {
   changed: boolean;
   /** Where the previous latest was archived, or null (first run / overwrite). */
   archivedTo: string | null;
+  /**
+   * Set when the staged snapshot was OLDER than the current latest (a Wayback
+   * capture backfilling history): it was filed here under `versions/` and the
+   * root was not touched.
+   */
+  filedAs: string | null;
   contentHash: string;
 }
 
 interface SnapshotManifest {
   capturedAt?: string;
+  /** Historical timestamp for Wayback captures — takes precedence as "when". */
+  snapshotAt?: string;
   contentHash?: string;
+}
+
+/** The date a snapshot is *from*: the Wayback timestamp if any, else the run time. */
+function effectiveDate(m: SnapshotManifest | null): string | undefined {
+  return m?.snapshotAt || m?.capturedAt;
+}
+
+function toTime(iso: string | undefined): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  return Number.isNaN(t) ? null : t;
 }
 
 function readManifest(dir: string): SnapshotManifest | null {
@@ -89,23 +116,48 @@ function readManifest(dir: string): SnapshotManifest | null {
   }
 }
 
+/** A file's mtime — the date of a pre-`capturedAt` snapshot; null if unreadable. */
+function mtime(p: string): number | null {
+  try {
+    return fs.statSync(p).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 /** Second-precision, filesystem-safe id from an ISO timestamp: 20260102T090000Z. */
 function versionId(capturedAt: string | undefined, manifestPath: string): string {
   let d = capturedAt ? new Date(capturedAt) : null;
   if (!d || Number.isNaN(d.getTime())) {
     // Pre-`capturedAt` (or otherwise missing) — fall back to the file's mtime.
-    try {
-      d = fs.statSync(manifestPath).mtime;
-    } catch {
-      d = new Date();
-    }
+    d = new Date(mtime(manifestPath) ?? Date.now());
   }
   return d.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
 }
 
-/** Disambiguate two snapshots that share a second (`-2`, `-3`, …). */
-function uniqueVersionDir(outDir: string, capturedAt: string | undefined): string {
-  const base = versionId(capturedAt, path.join(outDir, "manifest.json"));
+/** Every version filed for the second `id` names: `id`, `id-2`, `id-3`, … */
+function siblingVersions(outDir: string, id: string): string[] {
+  const dir = path.join(outDir, "versions");
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names.filter((n) => n === id || n.startsWith(`${id}-`)).map((n) => path.join(dir, n));
+}
+
+/**
+ * Disambiguate two snapshots that share a second (`-2`, `-3`, …). `manifestPath`
+ * is only consulted when the date is missing (mtime fallback) — it defaults to
+ * the root manifest because the usual caller is rotating the current latest.
+ */
+function uniqueVersionDir(
+  outDir: string,
+  effectiveAt: string | undefined,
+  manifestPath = path.join(outDir, "manifest.json"),
+): string {
+  const base = versionId(effectiveAt, manifestPath);
   let id = base;
   for (let n = 2; fs.existsSync(path.join(outDir, "versions", id)); n++) id = `${base}-${n}`;
   return path.join(outDir, "versions", id);
@@ -132,17 +184,60 @@ export function commitSnapshot(stagingDir: string, outDir: string, opts: CommitO
   const prev = readManifest(outDir);
   const hasLatest = prev !== null && fs.existsSync(path.join(outDir, "index.html"));
 
+  // Backfill: the staged snapshot is from BEFORE the current latest (a Wayback
+  // capture of an older version). File it into versions/ under its own
+  // effective date and leave the root — the newest version — untouched. This
+  // comes before the unchanged-root check on purpose: a 2009 capture that is
+  // byte-identical to today's root is still new information (the page was
+  // already like this in 2009) and belongs on the timeline.
+  // `--overwrite` here means "replace the version of THAT moment", never the
+  // root: re-running a historical capture (say, with --keep-js) swaps in the
+  // new one instead of clobbering the newest version or adding a `-2` twin.
+  if (hasLatest) {
+    const stagedAt = toTime(effectiveDate(staged));
+    // A pre-`capturedAt` root is dated by its manifest's mtime (as versionId
+    // does) — it must not be displaced by a capture from years before it.
+    const latestAt = toTime(effectiveDate(prev)) ?? mtime(path.join(outDir, "manifest.json"));
+    if (stagedAt !== null && latestAt !== null && stagedAt < latestAt) {
+      const stagedManifest = path.join(stagingDir, "manifest.json");
+      const id = versionId(effectiveDate(staged), stagedManifest);
+      const exact = path.join(outDir, "versions", id);
+      if (opts.overwrite) {
+        fs.mkdirSync(path.dirname(exact), { recursive: true });
+        // Swap, don't delete-then-recreate: with the version folder open in
+        // Finder, deleting it and creating a same-named one seconds later
+        // left an empty "<id> 2" twin behind (macOS keeps the old node).
+        const old = `${exact}.amber-old`;
+        fs.rmSync(old, { recursive: true, force: true });
+        if (fs.existsSync(exact)) fs.renameSync(exact, old);
+        fs.renameSync(stagingDir, exact);
+        fs.rmSync(old, { recursive: true, force: true });
+        return { outDir, changed: true, archivedTo: null, filedAs: exact, contentHash };
+      }
+      // The same historical moment captured twice with identical content is
+      // not a new version — dedupe against everything filed for that second.
+      if (siblingVersions(outDir, id).some((dir) => readManifest(dir)?.contentHash === contentHash)) {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+        return { outDir, changed: false, archivedTo: null, filedAs: null, contentHash };
+      }
+      const dest = uniqueVersionDir(outDir, effectiveDate(staged), stagedManifest);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.renameSync(stagingDir, dest);
+      return { outDir, changed: true, archivedTo: null, filedAs: dest, contentHash };
+    }
+  }
+
   // Unchanged re-archive: keep the existing latest, throw the staged build away.
   if (hasLatest && !opts.overwrite && prev!.contentHash === contentHash) {
     fs.rmSync(stagingDir, { recursive: true, force: true });
-    return { outDir, changed: false, archivedTo: null, contentHash };
+    return { outDir, changed: false, archivedTo: null, filedAs: null, contentHash };
   }
 
   fs.mkdirSync(outDir, { recursive: true });
   let archivedTo: string | null = null;
 
   if (hasLatest && !opts.overwrite) {
-    archivedTo = uniqueVersionDir(outDir, prev!.capturedAt);
+    archivedTo = uniqueVersionDir(outDir, effectiveDate(prev));
     moveSnapshotInto(outDir, archivedTo); // rotate current latest into versions/
   } else if (hasLatest) {
     // --overwrite: discard the current latest, leave versions/ untouched.
@@ -157,5 +252,5 @@ export function commitSnapshot(stagingDir: string, outDir: string, opts: CommitO
     fs.renameSync(path.join(stagingDir, name), path.join(outDir, name));
   }
   fs.rmSync(stagingDir, { recursive: true, force: true });
-  return { outDir, changed: true, archivedTo, contentHash };
+  return { outDir, changed: true, archivedTo, filedAs: null, contentHash };
 }

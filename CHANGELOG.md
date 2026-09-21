@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.8.0 — 2026-09-20
+
+- **Historical versions via the Wayback Machine.** `amber --at 2009-06 <url>`
+  (or `--at latest`, or just a pasted `web.archive.org` URL — the extension's
+  button on a Wayback page does the same) archives a page as it *was*. Built
+  on Wayback's raw `id_` mode: the capture's original bytes, no toolbar or
+  rewriting, with every asset fetched through the archive at the served
+  timestamp. Filed under the original URL's slug and dated by the snapshot
+  (`snapshotAt`), so live and historical captures of one page form a single
+  timeline: a capture older than the current latest goes straight into
+  `versions/` and the root keeps the newest. The library index dates such
+  rows by the snapshot with a "wayback" mark. With `--keep-js` the historical
+  page is rendered in Chromium with every request answered from the archive,
+  so its era's JavaScript runs against its era's assets; `--overwrite` on a
+  historical capture replaces that version in place.
+- **Non-UTF-8 pages decode correctly now.** `Response.text()` decodes UTF-8
+  unconditionally; amber now honours the declared charset (header, then
+  `<meta>`, with browser-like fallbacks) — Latin-1, windows-1252 smart quotes,
+  Shift_JIS, EUC-JP — and rewrites the archive's charset declaration to UTF-8
+  so browsers read what amber wrote. Affects any non-UTF-8 page, not just
+  historical ones.
+- Fetches retry transient network errors and 429/5xx with backoff; Wayback
+  requests are spaced out and identify amber in the User-Agent.
+- **Keep-js replay covers 2010-era JavaScript.** The shim now remaps `url()`
+  in runtime-set inline styles (jQuery carousels swapping root-relative
+  backgrounds), runtime-created `<script src>`, and tags injected via
+  `document.write` (CDN jQuery, analytics) through the asset map — unrecorded
+  ones fail closed like every other load. The asset map is the first thing in
+  `<head>` and a lookup before it exists is no longer cached as a permanent
+  miss. Tracker scripts are stripped *before* the keep-js render too, so the
+  recording runs exactly the code the archive replays (a tracker's
+  `Math.random` draws were shifting every seeded choice after it). The
+  classic Google Analytics snippets and TellApart are recognised as trackers.
+- A render's non-2xx responses are no longer recorded as assets — a 404's
+  error page (a full HTML document from the Wayback Machine) was being
+  inlined into the `<script>` it stood in for.
+- **Hardening from review.** `--overwrite` on a historical capture swaps the
+  version in by rename (delete-then-recreate left an empty `<id> 2` twin
+  behind under iCloud-synced Documents); a historical capture byte-identical
+  to today's root is still filed (the page was already like this then); a
+  pre-`capturedAt` root is dated by its mtime so an older capture can't
+  displace it; same-second dedupe checks every `-N` sibling. A Wayback
+  redirect off the archive is an error rather than an archive of wherever it
+  landed; calendar/wildcard `web.archive.org` URLs and an empty `--at` are
+  rejected up front; the extension's popup points at the filed version.
+  Retries no longer replay deterministic failures (bad URL, redirect loop).
+  `<meta>` charset sniffing ignores comments and `charset=` prose in
+  unrelated meta tags; CSS files are decoded by their own charset (`@charset`,
+  header) and written as UTF-8. A slug can no longer be `.` or `..`.
+
 ## 0.7.0 — 2026-08-09
 
 - **The library** — the archive root now maintains a browsable `index.html` of

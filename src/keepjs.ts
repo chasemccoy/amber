@@ -24,6 +24,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
+import * as cheerio from "cheerio";
 import type { CheerioAPI } from "cheerio";
 import { USER_AGENT, SEEDED_RANDOM_SNIPPET, type RenderedResource } from "./render.js";
 import { MIME } from "./serve.js";
@@ -104,9 +105,11 @@ export interface KeepJsOptions {
 // Third-party analytics/consent/ads — removed even in keep-js mode. The point
 // of the flag is the page's own runtime, not its surveillance.
 const TRACKER_SRC =
-  /googletagmanager|google-analytics|gtag\/js|doubleclick|adsbygoogle|facebook\.net|fbevents|hotjar|clarity\.ms|segment\.(?:com|io)|cdn\.segment|plausible\.io|usefathom|matomo|mixpanel|amplitude|fullstory|intercom(?:cdn)?\.|sentry(?:-cdn)?\.|newrelic|cookiebot|cookielaw|onetrust|consentmanager|quantserve|scorecardresearch|chartbeat|parsely|criteo|taboola|outbrain/i;
+  /googletagmanager|google-analytics|gtag\/js|doubleclick|adsbygoogle|facebook\.net|fbevents|hotjar|clarity\.ms|segment\.(?:com|io)|cdn\.segment|plausible\.io|usefathom|matomo|mixpanel|amplitude|fullstory|intercom(?:cdn)?\.|sentry(?:-cdn)?\.|newrelic|cookiebot|cookielaw|onetrust|consentmanager|quantserve|scorecardresearch|chartbeat|parsely|criteo|taboola|outbrain|tellapart/i;
+// The last three are the 2000s-era Google Analytics snippets (document.write
+// of ga.js, _gat._getTracker, _gaq.push) and TellApart retargeting.
 const TRACKER_INLINE =
-  /\b(?:gtag\(|dataLayer\s*[.=[]|fbq\(|_paq\b|ga\(['"]create|_hsq\b|heap\.load|mixpanel\.init|amplitude\.getInstance)/;
+  /\b(?:gtag\(|dataLayer\s*[.=[]|fbq\(|_paq\b|ga\(['"]create|_hsq\b|heap\.load|mixpanel\.init|amplitude\.getInstance|_gat\.|_gaq\b)|google-analytics\.com|tellapart/i;
 
 // Non-executing script types that must survive untouched (structured data).
 const DATA_SCRIPT_TYPE = /json|template/i;
@@ -115,6 +118,32 @@ function isExecutable(type: string | undefined): boolean {
   if (!type) return true;
   const t = type.trim().toLowerCase();
   return t === "" || t === "text/javascript" || t === "application/javascript" || t === "module";
+}
+
+/**
+ * Remove tracker scripts from raw page HTML BEFORE a keep-js render. The
+ * render must execute exactly the script set the archive will replay: a
+ * tracker stripped only afterwards (classify, in applyKeepJs) has already
+ * run during the recording — consumed Math.random draws, written DOM — so
+ * every seeded choice made after it (evernote 2010's green-or-blue download
+ * button) comes out differently offline. Same heuristics as classify, which
+ * still catches whatever a page injects at runtime.
+ */
+export function stripTrackers(html: string): { html: string; removed: number } {
+  const $ = cheerio.load(html);
+  let removed = 0;
+  for (const el of $("script").toArray()) {
+    const type = $(el).attr("type");
+    if (type && DATA_SCRIPT_TYPE.test(type)) continue;
+    if (!isExecutable(type)) continue;
+    const src = $(el).attr("src");
+    if (src ? TRACKER_SRC.test(src) : TRACKER_INLINE.test($(el).html() ?? "")) {
+      $(el).remove();
+      removed++;
+    }
+  }
+  // Untouched pages keep their exact bytes — re-serialising is not free.
+  return { html: removed ? $.html() : html, removed };
 }
 
 export async function applyKeepJs($: CheerioAPI, opts: KeepJsOptions): Promise<KeepJsReport> {
@@ -252,8 +281,10 @@ export async function injectRuntimeAssets(
     if (a.ok && a.localPath) map[a.url] = a.localPath;
   }
   const json = JSON.stringify(map).replace(/</g, "\\u003c");
-  // The shim reads this lazily, so it may be injected after the shim script.
-  $("head").append(`<script type="application/json" id="amber-asset-map">${json}</script>`);
+  // First thing in <head>, ahead of the shim: a page's own head scripts start
+  // loading things immediately (Google's loader document.write's jQuery on
+  // evernote.com 2010), and the shim reads this map lazily on that first load.
+  $("head").prepend(`<script type="application/json" id="amber-asset-map">${json}</script>`);
 }
 
 /**
@@ -703,7 +734,9 @@ async function bundleModules(
  * Injected inline ahead of everything else. Patches the network APIs so the
  * kept app code replays the recorded session instead of reaching the network:
  * fetch/XHR answer from the embedded map (synthetic 504 on a miss), beacons are
- * swallowed, WebSockets fail cleanly.
+ * swallowed, WebSockets fail cleanly, and every runtime-constructed load —
+ * element src/href, inline-style url(), document.write'd tags — goes through
+ * the asset map or fails closed.
  */
 const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
 (() => {
@@ -845,7 +878,10 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
   var getAssetMap = function () {
     if (assetMap) return assetMap;
     var el = document.getElementById('amber-asset-map');
-    assetMap = el ? JSON.parse(el.textContent) : {};
+    // Never cache a miss: a <head> script that loads something before the
+    // map element is parsed must not pin every later lookup to {}.
+    if (!el) return {};
+    assetMap = JSON.parse(el.textContent);
     return assetMap;
   };
   var byBasename = null;
@@ -883,12 +919,13 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
     // else (relative oddities) to fail against the local filesystem.
     return /^https?:/i.test(abs) ? BLOCKED : v;
   };
-  var patchProp = function (proto, prop) {
+  var patchProp = function (proto, prop, map) {
     var d = Object.getOwnPropertyDescriptor(proto, prop);
     if (!d || !d.set) return;
+    map = map || mapAsset;
     Object.defineProperty(proto, prop, {
       get: d.get,
-      set: function (v) { d.set.call(this, mapAsset(v)); },
+      set: function (v) { d.set.call(this, map(v)); },
       configurable: true,
     });
   };
@@ -897,6 +934,42 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
   if (window.HTMLSourceElement) patchProp(HTMLSourceElement.prototype, 'src');
   if (window.HTMLVideoElement) patchProp(HTMLVideoElement.prototype, 'poster');
   if (window.HTMLLinkElement) patchProp(HTMLLinkElement.prototype, 'href');
+  if (window.HTMLScriptElement) patchProp(HTMLScriptElement.prototype, 'src');
+
+  // Inline styles set at runtime: jQuery-era carousels swap card art with
+  // el.style.background = 'url(/img/x.png) …' (evernote.com, 2010). Those
+  // paths are root-relative, so on file:// they resolve to the filesystem
+  // root. Remap every url() in a style value through the asset map.
+  var mapCss = function (v) {
+    if (typeof v !== 'string' || v.indexOf('url(') === -1) return v;
+    return v.replace(/url\\(\\s*(['"]?)([^'")\\s]+)\\1\\s*\\)/g, function (_, q, u) {
+      return 'url(' + q + mapAsset(u) + q + ')';
+    });
+  };
+  var styleProto = window.CSS2Properties ? CSS2Properties.prototype
+    : window.CSSStyleDeclaration ? CSSStyleDeclaration.prototype : null;
+  if (styleProto) {
+    var origSetProperty = styleProto.setProperty;
+    if (typeof origSetProperty === 'function') {
+      styleProto.setProperty = function (name, value, priority) {
+        return origSetProperty.call(this, name, mapCss(value), priority);
+      };
+    }
+    ['cssText', 'background', 'backgroundImage', 'borderImage', 'borderImageSource',
+     'listStyle', 'listStyleImage', 'maskImage', 'content', 'cursor'].forEach(function (p) {
+      if (Object.getOwnPropertyDescriptor(styleProto, p)) return patchProp(styleProto, p, mapCss);
+      // Chromium serves the camelCase properties through a named-property
+      // interceptor rather than prototype accessors; an accessor defined on
+      // the prototype takes precedence over it.
+      var kebab = p.replace(/[A-Z]/g, function (c) { return '-' + c.toLowerCase(); });
+      Object.defineProperty(styleProto, p, {
+        get: function () { return this.getPropertyValue(kebab); },
+        set: function (v) { origSetProperty.call(this, kebab, mapCss(v)); },
+        configurable: true,
+      });
+    });
+  }
+
   var origSetAttr = Element.prototype.setAttribute;
   Element.prototype.setAttribute = function (name, value) {
     var n = String(name).toLowerCase();
@@ -906,6 +979,26 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
     var isLoad = n === 'src' || n === 'poster' ||
       ((n === 'href' || n === 'xlink:href') && (tag === 'LINK' || tag === 'USE'));
     if (isLoad && typeof value === 'string') value = mapAsset(value);
+    else if (n === 'style') value = mapCss(value);
     return origSetAttr.call(this, name, value);
   };
+
+  // document.write('<script src="http://…/lib.js">') was how 2010 loaded CDN
+  // libraries and analytics. The parser fetches those straight from the
+  // network, bypassing every patch above — so rewrite the written markup's
+  // loads through the asset map (unrecorded ones fail closed like the rest).
+  // <a href> is not a load and is left alone.
+  var WRITTEN_LOAD = /(<(?:script|img|source|video|audio|embed|link)\\b[^>]*?\\s(?:src|href)\\s*=\\s*)(["']?)([^"'\\s>]+)\\2/gi;
+  var mapMarkup = function (s) {
+    return String(s).replace(WRITTEN_LOAD, function (_, pre, q, u) {
+      return pre + q + mapAsset(u.replace(/&amp;/g, '&')) + q;
+    });
+  };
+  ['write', 'writeln'].forEach(function (fn) {
+    var orig = document[fn];
+    if (typeof orig !== 'function') return;
+    document[fn] = function () {
+      return orig.call(document, mapMarkup(Array.prototype.join.call(arguments, '')));
+    };
+  });
 })();`;

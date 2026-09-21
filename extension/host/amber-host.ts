@@ -95,10 +95,13 @@ async function main(): Promise<void> {
         insecureTLS: process.env.AMBER_INSECURE_TLS === "1",
       },
     );
+    // A Wayback page files a historical version under the slug (the root
+    // keeps the newest capture) — point the popup at what was just written.
+    const written = res.filedAs ?? res.outDir;
     reply({
       ok: true,
-      outDir: res.outDir,
-      indexPath: path.join(res.outDir, "index.html"),
+      outDir: written,
+      indexPath: path.join(written, "index.html"),
       title: res.plan.title,
       planSource: res.plan.source,
       assetCount: res.assetCount,

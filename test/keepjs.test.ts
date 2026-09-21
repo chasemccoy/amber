@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as cheerio from "cheerio";
-import { applyKeepJs, finalizeKeepJsDelivery, injectRuntimeAssets, keepJsContentHash, type KeepJsReport } from "../src/keepjs.js";
+import { applyKeepJs, finalizeKeepJsDelivery, injectRuntimeAssets, keepJsContentHash, stripTrackers, type KeepJsReport } from "../src/keepjs.js";
 import type { RenderedResource } from "../src/render.js";
 
 const PAGE = "https://example.com/post/";
@@ -38,6 +38,9 @@ const HTML = `<html><head>
   <script type="application/ld+json">{"@type":"Organization"}</script>
   <script src="https://www.googletagmanager.com/gtag/js?id=G-1"></script>
   <script>window.dataLayer = window.dataLayer || [];</script>
+  <script>document.write("<scr"+"ipt src='http://www.google-analytics.com/ga.js'></scr"+"ipt>");</script>
+  <script>try { var t = _gat._getTracker("UA-1"); t._trackPageview(); } catch (e) {}</script>
+  <script src="http://static.tellapart.com/crumb.js"></script>
   <script type="module" src="/assets/app.js"></script>
   <script>window.classicKept = true;</script>
 </head><body><p>hi</p></body></html>`;
@@ -52,7 +55,7 @@ test("applyKeepJs removes trackers, keeps classic, flattens modules, injects shi
 
   const report = await applyKeepJs($, { pageUrl: PAGE, resources, rootDir: root });
 
-  assert.equal(report.trackersRemoved, 2); // gtm src + dataLayer inline
+  assert.equal(report.trackersRemoved, 5); // gtm src + dataLayer inline + 2000s-era GA (write + _gat) + tellapart
   assert.equal(report.modulesBundled, 1);
   assert.equal(report.classicKept, 1);
   assert.equal(report.warnings.length, 0);
@@ -99,6 +102,19 @@ test("applyKeepJs embeds xhr/fetch responses for replay, escaping </script>", as
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("stripTrackers removes tracker scripts from raw HTML before a render, leaving everything else alone", () => {
+  const { html, removed } = stripTrackers(HTML);
+  assert.equal(removed, 5);
+  assert.doesNotMatch(html, /googletagmanager|dataLayer|google-analytics|_gat|tellapart/);
+  assert.match(html, /classicKept/);
+  assert.match(html, /ld\+json/);
+  assert.match(html, /assets\/app\.js/);
+
+  // A page without trackers keeps its exact bytes.
+  const clean = "<html><head><script>window.x = 1;</script></head><body><p>hi</p></body></html>";
+  assert.deepEqual(stripTrackers(clean), { html: clean, removed: 0 });
+});
+
 test("injectRuntimeAssets localises JS-loaded resources and embeds the url map", async () => {
   const $ = cheerio.load("<html><head></head><body></body></html>");
   const resources = new Map<string, RenderedResource>([
@@ -126,6 +142,9 @@ test("injectRuntimeAssets localises JS-loaded resources and embeds the url map",
   const map = JSON.parse($("#amber-asset-map").html()!.replace(/\\u003c/g, "<"));
   assert.equal(map["https://example.com/films/a.mp4"], "assets/media/a.mp4");
   assert.equal(map["https://example.com/hero.png"], "assets/images/hero-abc.png");
+  // First in <head>: a page's own head scripts load things before the shim
+  // could read a map that came later.
+  assert.equal($("head").children().first().attr("id"), "amber-asset-map");
 });
 
 function fakeArchive(): { root: string; $: import("cheerio").CheerioAPI } {

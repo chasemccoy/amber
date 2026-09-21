@@ -79,8 +79,10 @@ Two entry points share the same capture/clean code:
   trackers removed by heuristic, module scripts flattened to one classic IIFE
   via esbuild (recorded responses as the virtual fs, network fallback for lazy
   chunks), a replay shim injected (patches fetch/XHR from an embedded response
-  map, remaps runtime-constructed element src/poster/href through an asset map
-  with nearest-variant fallback, stubs beacons/WebSocket), runtime-only assets
+  map; remaps every runtime-constructed load — element src/poster/href,
+  inline-style `url()`, `document.write`'d tags — through an asset map with
+  nearest-variant fallback, failing closed on misses; stubs
+  beacons/WebSocket), runtime-only assets
   localised with numeric-sequence gap-filling, and finally
   `finalizeKeepJsDelivery()` collapses everything into ONE self-contained
   `index.html` with assets as data: URIs — that's what lets canvas/WebGL run
@@ -97,6 +99,45 @@ Two entry points share the same capture/clean code:
   `amber doctor` reports it. Keep-js contract: the recorded session replays
   offline; behaviour beyond it is best-effort. Extension path and agent mode
   don't support keep-js.
+  **Wayback captures** (`src/wayback.ts`, `archiveWayback()` in pipeline.ts) —
+  a `web.archive.org` target URL or `--at <date|latest>` archives a historical
+  version. Built on Wayback's `id_` raw modifier (`/web/<ts>id_/<url>` returns
+  the capture's ORIGINAL bytes, unrewritten); the page is fetched that way and
+  every asset goes through the Capturer's `resolveUrl` hook to the same
+  modifier at the served timestamp. No discovery API: Wayback's own 302 to
+  the nearest capture IS the lookup (`--at latest` = nearest to now; the
+  Availability API misses bare hosts and CDX is slow). Facts from live probing
+  that the code depends on: Location keeps `id_` and embeds the real 14-digit
+  stamp; `Memento-Datetime` is on every replayed capture (including archived
+  404s) and absent from Wayback's own "not archived" 404; the served original
+  URL is canonicalised (`www.` added, trailing slash DOUBLED, `:80`) —
+  `canonicalOriginalUrl()` cleans it; the original Content-Type is promoted to
+  the live header with charset only if the origin sent one; throttling is TCP
+  connection refusal after ~10 rapid requests, never 429 — hence
+  `fetchRetrying` retries network errors with backoff and Wayback fetches are
+  spaced (`WAYBACK_REQUEST_DELAY_MS`). The manifest gets `snapshotAt` (the
+  capture's moment — the snapshot's EFFECTIVE date) and `wayback` provenance;
+  `commitSnapshot` files a capture older than the current latest straight into
+  `versions/` (root = newest effective date; `--overwrite` on an older
+  capture replaces THAT version, never the root), and the library index dates
+  the row by `snapshotAt` with a "wayback" mark. Static by default; with
+  keep-js (forced or plan-decided) the page is rendered in Chromium at its
+  ORIGINAL url with `RenderOptions.fulfill` answering every request from
+  Wayback (`waybackFulfiller`: serialised, spaced, cached, seeded with the
+  already-fetched page) — the browser believes it's on the original origin,
+  so every recorded URL stays in the original URL space and the normal
+  keep-js machinery applies unchanged; backend is recorded as
+  `wayback-render`. `--playwright` alone is rejected. The extension path
+  delegates Wayback URLs here. Tested against a fake Wayback server in
+  `test/archive-url.test.ts`.
+
+  **Charsets** (`src/charset.ts`) — `Response.text()` decodes UTF-8
+  unconditionally, so `fetchPage`/Wayback decode bytes via `decodeHtml()`:
+  BOM > header charset > `<meta>` > (UTF-8 if valid, else windows-1252), with
+  unknown labels falling through and a hand-rolled windows-1252 table (Node's
+  decoder leaves 0x80–0x9F as C1 controls). `declareUtf8()` in finishArchive
+  replaces the page's charset `<meta>` with `<meta charset="utf-8">` — the
+  archive is written as UTF-8, and a surviving `charset=EUC-JP` mojibakes it.
 - **Agent** (`pnpm agent`, or `amber agent` from the npm install — src/cli.ts
   lazy-imports `agent/agent.js` so plain archives never load the SDK tool
   runner) — `agent/agent.ts` `runAgentLoop()`, a `beta.messages.toolRunner`
@@ -120,8 +161,9 @@ host share this default.
 ├── assets/{images,static,media}/
 ├── plan.json        # the applied judgement (pipeline only)
 ├── manifest.json    # source/final URL, capturedAt, contentHash, backend, tags, asset list, errors, cleanReport
+│                    # (+ snapshotAt and wayback provenance for Wayback captures)
 └── versions/        # older snapshots, each a full self-contained archive
-    └── <YYYYMMDDTHHMMSSZ>/   # named from that snapshot's capturedAt (second precision)
+    └── <YYYYMMDDTHHMMSSZ>/   # named from that snapshot's EFFECTIVE date (snapshotAt, else capturedAt; second precision)
 ```
 
 Asset filenames are `<basename>-<8-char sha1 of full URL><ext>` (`slugFor`), so
@@ -131,12 +173,17 @@ distinct URLs never collide and the same URL is downloaded once (cached).
 staging dir under `outRoot`, then `commitSnapshot()` promotes it: the newest
 snapshot lives at the slug root (so `<slug>/index.html` is always latest and the
 extension/library see no layout change), and the previous latest rotates into
-`versions/<capturedAt>/`. The set of folders *is* the history — there is no index
-file; derive the timeline by reading each snapshot's `manifest.json`. Re-archiving
-identical content is skipped (compared via `manifest.contentHash`, a sha256 of
-`index.html` + asset bytes that ignores `manifest.json`/`plan.json`). `--overwrite`
-replaces the latest in place without rotating it into `versions/`. Both entry
-points share this: the pipeline via `finishArchive()`, the agent via `runAgent()`.
+`versions/<effective date>/`. A capture whose effective date is OLDER than the
+root's (a Wayback backfill) is filed straight into `versions/` instead. The set
+of folders *is* the history — there is no index file; derive the timeline by
+reading each snapshot's `manifest.json`. Re-archiving identical content at the
+same point on the timeline is skipped (compared via `manifest.contentHash`, a
+sha256 of `index.html` + asset bytes that ignores `manifest.json`/`plan.json`).
+`--overwrite` replaces the latest in place without rotating it into
+`versions/` (on a backfill: replaces that version, swapped in by rename — a
+delete-then-recreate left an empty "<id> 2" twin under iCloud-synced
+Documents). Both entry points share this: the pipeline via `finishArchive()`,
+the agent via `runAgent()`.
 
 ## Packaging (npm)
 

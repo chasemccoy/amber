@@ -88,6 +88,9 @@ amber --overwrite <url>         # replace the latest snapshot, keep no history
 amber -o ~/somewhere <url>      # choose the output directory
 amber --keep-js <url>           # force keep-js mode (see Living pages below)
 amber --no-keep-js <url>        # never keep JS, even if the plan recommends it
+amber --at 2009-06 <url>        # the page as it WAS, via the Wayback Machine (see below)
+amber --at latest <url>         # the most recent Wayback capture — for dead sites
+amber https://web.archive.org/web/20090615/http://example.com/   # same thing, from a Wayback URL
 amber agent <url>               # Claude cleans interactively — for pages the pipeline gets wrong
 amber serve <slug-or-path>      # view an archive over localhost (folder-layout keep-js archives)
 amber doctor                    # check the environment: key, Playwright, esbuild, yt-dlp, ffmpeg
@@ -146,6 +149,48 @@ best-effort.** Data behind interactions the capture never performed isn't in
 the archive. Keep-js needs `ANTHROPIC_API_KEY` (for the judgement — or force
 it with `--keep-js`), Playwright, and esbuild (`npm i -g esbuild`).
 
+## Historical versions (Wayback Machine)
+
+Amber can archive a page as it *was*, from the Internet Archive's Wayback
+Machine, and file it as if you'd captured it then:
+
+```bash
+amber --at 2009-06 http://example.com/          # nearest capture to June 2009
+amber --at latest http://gone.example.com/      # a dead site's last capture
+amber https://web.archive.org/web/20090615/http://example.com/
+```
+
+Any `web.archive.org` URL works as the target — paste one from your browser, or
+hit the extension's button while looking at a Wayback page — and `--at` takes
+a year, month, day, or a 14-digit Wayback stamp. Wayback snaps to the nearest
+capture it has (which can be months away for a quiet URL; the run says which
+capture it actually served).
+
+What makes this clean is Wayback's raw mode: amber fetches the capture's
+**original bytes** — no toolbar, no injected scripts, no rewritten URLs — and
+routes every asset download through the archive at the same timestamp. The
+result is an ordinary amber archive of the 2009 page: filed under the original
+URL's slug, cleaned by the same plan, tagged, thumbnailed.
+
+The timeline is the point. A Wayback capture's effective date is the snapshot's
+date (`snapshotAt` in the manifest; `capturedAt` stays the real run time), so
+archiving today's page and then `--at 2009` of the same URL gives one slug
+whose root is the newest version and whose `versions/` holds 2009. The library
+index has one row per slug, dated by its newest version and counting the rest;
+a page whose newest capture came from Wayback (a dead site) shows that
+snapshot's date with a "wayback" mark. Old pages also tend to be Latin-1,
+Shift_JIS or EUC-JP; amber decodes by the declared charset (or a sensible
+default) and writes the archive as UTF-8.
+
+Wayback captures are static by default. Add `--keep-js` (or let Claude's plan
+decide) and amber instead renders the historical page in Chromium at its
+original URL with **every request the browser makes answered from the
+archive** — so the era's JavaScript runs against the era's assets, and a 2010
+carousel spins in the archive the way it did in 2010. Re-running a historical
+capture with `--overwrite` replaces that version in place (never the root).
+archive.org is fetched politely throughout — sequentially, spaced out, with
+backoff — so a keep-js render of an asset-heavy old page takes a few minutes.
+
 ## What you get
 
 ```
@@ -158,8 +203,8 @@ it with `--keep-js`), Playwright, and esbuild (`npm i -g esbuild`).
 ├── thumbnail.jpg           # viewport screenshot, for the library index
 ├── plan.json               # the cleanup judgement that was applied (auditable, replayable)
 ├── manifest.json           # source URL, capture time, topical tags, asset list, errors, what was removed
-└── versions/               # older snapshots (only after you re-archive), each a full archive
-    └── 20260102T090000Z/   # … with its own index.html + assets + manifest
+└── versions/               # older snapshots (after you re-archive, or backfill via Wayback), each a full archive
+    └── 20260102T090000Z/   # … named by when the snapshot is FROM, with its own index.html + assets + manifest
 ```
 
 ## History over time
@@ -171,7 +216,9 @@ history; there's no index to maintain.
 
 An identical re-capture is detected (by a content hash that ignores timestamps)
 and skipped, so a page that hasn't changed doesn't pile up duplicate snapshots.
-Pass `--overwrite` to replace the latest in place and keep no history.
+Pass `--overwrite` to replace the latest in place and keep no history. Wayback
+captures slot into the same timeline by their snapshot date: one older than the
+current latest is filed into `versions/` and the root is left alone.
 
 ## How it works
 

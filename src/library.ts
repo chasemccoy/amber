@@ -14,7 +14,10 @@ export interface LibraryEntry {
   title: string;
   sourceUrl: string;
   host: string;
-  capturedAt: string; // ISO, or "" when unknown
+  /** Effective date (ISO, or "" when unknown): the Wayback snapshot time for historical captures, else the run time. */
+  capturedAt: string;
+  /** True when the snapshot came from the Wayback Machine. */
+  viaWayback: boolean;
   tags: string[];
   /** "keep-js" | "static" — how the page's runtime was treated. */
   mode: "keep-js" | "static";
@@ -30,6 +33,8 @@ interface Manifestish {
   title?: string;
   sourceUrl?: string;
   capturedAt?: string;
+  snapshotAt?: string;
+  wayback?: unknown;
   tags?: string[];
   keepJs?: unknown;
 }
@@ -67,7 +72,8 @@ function readEntry(outRoot: string, slug: string): LibraryEntry | null {
     title: (manifest.title || "").trim() || slug,
     sourceUrl: manifest.sourceUrl ?? "",
     host,
-    capturedAt: manifest.capturedAt ?? "",
+    capturedAt: manifest.snapshotAt || manifest.capturedAt || "",
+    viaWayback: Boolean(manifest.wayback),
     tags: Array.isArray(manifest.tags) ? manifest.tags.filter((t) => typeof t === "string") : [],
     mode: manifest.keepJs ? "keep-js" : "static",
     versions,
@@ -153,7 +159,9 @@ function row(e: LibraryEntry): string {
   <td class="shot">${thumb}</td>
   <td class="title"><a href="${slugUri}/index.html">${esc(e.title)}</a></td>
   <td class="host"><a href="${esc(e.sourceUrl)}" rel="noreferrer">${esc(e.host || "—")}</a></td>
-  <td class="date" title="${esc(e.capturedAt)}">${esc(fmtDate(e.capturedAt))}</td>
+  <td class="date" title="${esc(e.capturedAt)}">${esc(fmtDate(e.capturedAt))}${
+    e.viaWayback ? ` <span class="via" title="Historical version, captured via the Wayback Machine">wayback</span>` : ""
+  }</td>
   <td class="tags">${tags}</td>
   <td class="mode"><span class="badge ${e.mode === "keep-js" ? "live" : ""}">${e.mode}</span></td>
   <td class="num">${e.versions || ""}</td>
@@ -226,6 +234,10 @@ export function renderLibraryIndex(entries: LibraryEntry[]): string {
     font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
   }
   .badge.live { color: var(--accent); }
+  .via {
+    font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--accent); margin-left: 0.35rem;
+  }
   .empty { color: var(--muted); padding: 3rem 0; }
   footer { margin-top: 2rem; color: var(--muted); font-size: 0.8rem; }
 </style>

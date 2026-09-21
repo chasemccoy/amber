@@ -10,6 +10,7 @@ import { heuristicPlan, llmPlan, parsePlan } from "./planner.js";
 import { mediaTargets, removeJunk, stripStatic, swapMedia, type CleanReport } from "./clean.js";
 import {
   applyKeepJs,
+  stripTrackers,
   finalizeKeepJsDelivery,
   injectRuntimeAssets,
   keepJsAvailable,
@@ -18,6 +19,21 @@ import {
 } from "./keepjs.js";
 import { commitSnapshot, hashSnapshotContent } from "./snapshot.js";
 import { libraryTags, updateLibraryIndex } from "./library.js";
+import {
+  WAYBACK_REQUEST_DELAY_MS,
+  WAYBACK_RETRY,
+  WAYBACK_USER_AGENT,
+  fetchWaybackPage,
+  formatTimestamp,
+  normalizeTimestamp,
+  nowTimestamp,
+  parseWaybackUrl,
+  waybackFulfiller,
+  waybackResolver,
+  waybackViewUrl,
+  type WaybackRef,
+} from "./wayback.js";
+import { AmberError } from "./errors.js";
 import type { CleanupPlan, CaptureOptions } from "./types.js";
 
 // Empty-when-JS-hasn't-run mount points for the common SPA frameworks.
@@ -69,6 +85,8 @@ export function slugifyUrl(url: string): string {
     base = url;
   }
   let slug = (base.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "archive").slice(0, 80);
+  // "." and ".." are hosts to the URL parser and traversal to the filesystem.
+  if (!/[A-Za-z0-9]/.test(slug)) slug = "archive";
   if (MAC_BUNDLE_EXT.test(slug)) slug = slug.replace(/\.(?=[^.]+$)/, "-");
   return slug;
 }
@@ -94,6 +112,16 @@ export interface ArchiveOptions extends CaptureOptions {
    * Default true; --no-keep-js sets it false.
    */
   autoKeepJs?: boolean;
+  /**
+   * Archive the page as it was at a moment in the past, via the Wayback
+   * Machine: "2009", "2009-06-15", a 14-digit stamp, or "latest" (the most
+   * recent capture — for dead sites). Giving a web.archive.org URL as the
+   * target implies this. The archive is filed under the ORIGINAL url and
+   * dated by the snapshot (manifest `snapshotAt`).
+   */
+  at?: string;
+  /** Test seam: an alternate Wayback host, and no politeness delay. */
+  wayback?: { base?: string; requestDelayMs?: number };
 }
 
 export interface ArchiveResult {
@@ -106,8 +134,52 @@ export interface ArchiveResult {
   changed: boolean;
   /** Where the previous latest was archived, or null (first run / overwrite). */
   archivedTo: string | null;
+  /**
+   * Set when this capture was OLDER than the existing latest (a Wayback
+   * backfill): it was filed here under versions/ and the root was untouched.
+   */
+  filedAs: string | null;
   /** Present when --keep-js ran: what the runtime-preservation pass did. */
   keepJs?: KeepJsReport;
+  /** Present for Wayback captures: which historical capture was archived. */
+  snapshot?: { snapshotAt: string; wayback: WaybackProvenance };
+}
+
+export interface WaybackProvenance {
+  /** The capture Wayback actually served, 14 digits (nearest to the request). */
+  timestamp: string;
+  /** What was asked for — a partial stamp, "latest", or the URL's own stamp. */
+  requested: string;
+  /** Human-facing replay URL of the served capture. */
+  url: string;
+}
+
+/**
+ * The archive is written as UTF-8 whatever the page was served as, so its
+ * charset declaration must say so — a surviving `<meta charset="EUC-JP">` (or
+ * `http-equiv="Content-Type"` with a charset) makes the browser decode our
+ * UTF-8 bytes as EUC-JP and mojibake the whole page. Replace any declaration
+ * with a single `<meta charset="utf-8">` at the top of <head>, and add one
+ * when the page declared nothing (browsers default undeclared file:// pages
+ * to windows-1252).
+ */
+/** keep-js renders run exactly the code the archive will replay (see stripTrackers). */
+function trackerStripper(log: (m: string) => void): (html: string) => string {
+  return (html) => {
+    const r = stripTrackers(html);
+    if (r.removed) log(`      [keep-js] ${r.removed} tracker script(s) removed before the render`);
+    return r.html;
+  };
+}
+
+function declareUtf8($: CheerioAPI): void {
+  $("meta[charset]").remove();
+  $("meta[http-equiv]").each((_, el) => {
+    if (/^content-type$/i.test($(el).attr("http-equiv") ?? "")) $(el).remove();
+  });
+  const head = $("head");
+  if (head.length) head.prepend('<meta charset="utf-8">');
+  else $.root().prepend('<meta charset="utf-8">');
 }
 
 /** Create a same-filesystem staging dir under `outRoot` to build a snapshot in. */
@@ -162,12 +234,36 @@ async function resolvePlan(
 
 export async function archiveUrl(url: string, opts: ArchiveOptions): Promise<ArchiveResult> {
   const log = (m: string) => opts.verbose && console.log(m);
-  const outDir = path.join(opts.outRoot, slugifyUrl(url));
+
+  // A Wayback URL, or --at, means "this page as it was": the archive is filed
+  // under the ORIGINAL url (one slug, one timeline) and dated by the snapshot.
+  let wayback: WaybackRef | null = parseWaybackUrl(url, opts.wayback?.base);
+  if (!wayback && /^https?:\/\/web\.archive\.org\//i.test(url)) {
+    throw new AmberError(
+      `${url} doesn't name a single capture (a calendar or wildcard view?) — open one capture and use its URL, or run --at <date> against the original URL`,
+    );
+  }
+  if (opts.at !== undefined && !opts.at.trim()) {
+    throw new AmberError("--at needs a date (2009, 2009-06, 20090615083000) or latest");
+  }
+  if (wayback && opts.at) {
+    throw new AmberError("--at can't be combined with a Wayback URL — the URL already names a capture");
+  }
+  if (!wayback && opts.at) {
+    // No discovery API: Wayback snaps any stamp to the nearest capture, so
+    // "latest" is simply the capture nearest to right now.
+    wayback = { timestamp: opts.at === "latest" ? nowTimestamp() : normalizeTimestamp(opts.at), originalUrl: url };
+  }
+  const target = wayback ? wayback.originalUrl : url;
+
+  const outDir = path.join(opts.outRoot, slugifyUrl(target));
   // Build into staging, then commit; the previous latest stays untouched until
   // the new snapshot is fully built.
   const staging = makeStagingDir(opts.outRoot);
 
   try {
+    if (wayback) return await archiveWayback(wayback, opts.at ?? wayback.timestamp, outDir, staging, opts);
+
     // 1. Capture page + assets. The default "auto" backend fetches statically
     // first and only boots Chromium when the page looks client-rendered, so a
     // plain server-rendered page never pays the browser cost.
@@ -183,6 +279,7 @@ export async function archiveUrl(url: string, opts: ArchiveOptions): Promise<Arc
         timeoutMs: opts.timeoutMs,
         insecureTLS: opts.insecureTLS,
         deterministicRandom: keepJs,
+        transformDocument: keepJs ? trackerStripper(log) : undefined,
       });
       thumbnail = r.thumbnail ?? null;
       cap.loadRender(r);
@@ -268,6 +365,105 @@ export async function archiveUrl(url: string, opts: ArchiveOptions): Promise<Arc
   }
 }
 
+/**
+ * The Wayback capture path: fetch the historical page's ORIGINAL bytes (the
+ * `id_` raw modifier — no toolbar, no rewriting), route every asset download
+ * through Wayback at that timestamp, and run the ordinary plan → clean →
+ * package stages. Static by default; with keep-js (forced, or the plan's
+ * preserveRuntime verdict) the page is instead rendered in Chromium at its
+ * ORIGINAL url with every request the browser makes answered from Wayback —
+ * so the era's JavaScript runs against the era's assets and the recording
+ * feeds the normal keep-js machinery in the original URL space.
+ */
+async function archiveWayback(
+  ref: WaybackRef,
+  requested: string,
+  outDir: string,
+  staging: string,
+  opts: ArchiveOptions,
+): Promise<ArchiveResult> {
+  const log = (m: string) => opts.verbose && console.log(m);
+  const base = opts.wayback?.base;
+
+  const asked = requested === "latest" ? "most recent capture" : `as of ${formatTimestamp(ref.timestamp)}`;
+  log(`[1/4] Fetching ${ref.originalUrl} from the Wayback Machine (${asked}, raw capture)`);
+  const page = await fetchWaybackPage(ref, { base });
+  // Wayback snaps to the nearest capture with no distance limit — say what it
+  // actually served, since months (or years) of drift is normal for quiet URLs.
+  if (page.timestamp !== ref.timestamp || requested === "latest") log(`      capture served: ${formatTimestamp(page.timestamp)}`);
+  if (page.originalUrl !== ref.originalUrl) log(`      served as: ${page.originalUrl}`);
+
+  const delayMs = opts.wayback?.requestDelayMs ?? WAYBACK_REQUEST_DELAY_MS;
+  const capturerOpts = {
+    timeoutMs: opts.timeoutMs,
+    insecureTLS: opts.insecureTLS,
+    // Every asset the page references is fetched through Wayback at the
+    // page's timestamp; Wayback snaps each to its nearest capture. Names and
+    // manifest entries stay keyed by the original URLs.
+    resolveUrl: waybackResolver(page.timestamp, base),
+    userAgent: WAYBACK_USER_AGENT,
+    requestDelayMs: delayMs,
+    retry: WAYBACK_RETRY,
+  };
+  let cap = new Capturer(staging, capturerOpts);
+  cap.loadRender({ html: page.html, finalUrl: page.originalUrl, baseUrl: page.originalUrl, resources: new Map() });
+
+  const plan = await resolvePlan(cap.$.html(), page.originalUrl, cap.$, opts);
+  const snapshot = {
+    snapshotAt: page.snapshotAt,
+    wayback: { timestamp: page.timestamp, requested, url: waybackViewUrl(page.timestamp, page.originalUrl, base) },
+  };
+
+  // keep-js for a historical page: same decision rule as the live path.
+  let keepJs = opts.keepJs === true || (opts.keepJs === undefined && (opts.autoKeepJs ?? true) && plan.preserveRuntime);
+  let thumbnail: Buffer | null = null;
+  if (keepJs && !(await keepJsAvailable())) {
+    log("      plan says this page needs its runtime, but esbuild isn't installed — static archive (npm i -g esbuild)");
+    keepJs = false;
+  }
+  if (keepJs) {
+    log(`      [keep-js] rendering ${page.originalUrl} in headless Chromium with every request served from the Wayback Machine`);
+    log("      (sequential, spaced fetches — this can take a few minutes for an asset-heavy page)");
+    let served = 0;
+    const fulfill = waybackFulfiller(page.timestamp, {
+      base,
+      delayMs,
+      seed: new Map([[page.originalUrl, { status: 200, contentType: page.contentType, body: page.body }]]),
+      onFetch: () => {
+        served++;
+        if (served % 25 === 0) log(`      ${served} requests served from the archive so far`);
+      },
+    });
+    try {
+      const r = await renderPage(page.originalUrl, {
+        // Every request is a spaced archive fetch: give the render room.
+        timeoutMs: Math.max(opts.timeoutMs, 10 * 60_000),
+        insecureTLS: opts.insecureTLS,
+        deterministicRandom: true,
+        fulfill,
+        transformDocument: trackerStripper(log),
+      });
+      thumbnail = r.thumbnail ?? null;
+      cap = new Capturer(staging, { ...capturerOpts, keepScripts: true });
+      cap.loadRender(r);
+      log(`      ${served} request(s) served from the archive during the render`);
+    } catch (err) {
+      const why = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+      log(`      keep-js render unavailable (${why}); archiving statically`);
+      keepJs = false;
+    }
+  }
+
+  return await finishArchive(
+    cap,
+    page.originalUrl,
+    outDir,
+    { backend: keepJs ? "wayback-render" : "wayback", backendMode: opts.backend },
+    { ...opts, keepJs, thumbnail, snapshot }, // null thumbnail -> finishArchive screenshots the reconstruction
+    plan,
+  );
+}
+
 /** A DOM already captured by something other than amber (e.g. a browser extension). */
 export interface DomCapture {
   url: string;
@@ -297,6 +493,15 @@ export interface DomArchiveOptions {
  */
 export async function archiveFromDom(capture: DomCapture, opts: DomArchiveOptions): Promise<ArchiveResult> {
   const { url, html } = capture;
+
+  // The extension on a Wayback page: the DOM it sends is Wayback's rewritten
+  // replay (toolbar, wombat.js, rerouted URLs) — the wrong thing to keep, and
+  // nothing on a Wayback page needs the browser's session. Hand the URL to the
+  // Wayback capture path instead; it refetches the original bytes.
+  if (parseWaybackUrl(url)) {
+    return archiveUrl(url, { ...opts, backend: "fetch", timeoutMs: 45000 });
+  }
+
   const outDir = path.join(opts.outRoot, slugifyUrl(url));
   const staging = makeStagingDir(opts.outRoot);
 
@@ -343,6 +548,8 @@ async function finishArchive(
     keepJs?: boolean;
     /** Viewport screenshot from the live render, when a browser was used. */
     thumbnail?: Buffer | null;
+    /** Wayback captures: the historical moment this snapshot is FROM. */
+    snapshot?: { snapshotAt: string; wayback: WaybackProvenance };
   },
   plan: CleanupPlan,
 ): Promise<ArchiveResult> {
@@ -363,6 +570,7 @@ async function finishArchive(
     ? { removed: 0, removeErrors: [] as string[] }
     : removeJunk(cap.$, plan, mediaTargets(cap.$, plan));
   const stripped = stripStatic(cap.$, { keepJs: opts.keepJs });
+  declareUtf8(cap.$);
 
   // keep-js: classify/flatten/replay before captureAssets, so the surviving
   // classic script tags (and nothing amber injected) get localised with the
@@ -394,6 +602,9 @@ async function finishArchive(
   if (keepJsReport) {
     await injectRuntimeAssets(cap.$, cap, cap.prefetchedResources, keepJsReport);
     log(`      [keep-js] ${keepJsReport.runtimeAssets} runtime-loaded asset(s) localised`);
+    // Back to the top of <head>, ahead of the injected blobs: the browser's
+    // charset prescan only reads the first 1024 bytes.
+    declareUtf8(cap.$);
   }
   log(`      removed ${junk.removed + stripped} elements; ${cap.assets.length} assets, ${cap.errors.length} errors`);
 
@@ -443,6 +654,9 @@ async function finishArchive(
     sourceUrl: url,
     finalUrl: cap.finalUrl,
     capturedAt: new Date().toISOString(),
+    // Wayback: the snapshot's own moment is the archive's effective date (see
+    // snapshot.ts); capturedAt above stays the honest run time.
+    ...(opts.snapshot ? { snapshotAt: opts.snapshot.snapshotAt, wayback: opts.snapshot.wayback } : {}),
     contentHash,
     backend: provenance.backend,
     backendMode: provenance.backendMode,
@@ -459,6 +673,7 @@ async function finishArchive(
   // Commit: rotate the previous latest into versions/, or skip if unchanged.
   const commit = commitSnapshot(staging, outDir, { overwrite: opts.overwrite });
   if (!commit.changed) log(`Unchanged — kept existing snapshot at ${outDir}`);
+  else if (commit.filedAs) log(`Done -> ${path.join(commit.filedAs, "index.html")} (older than the current latest — filed as a version)`);
   else if (commit.archivedTo) log(`Done -> ${path.join(outDir, "index.html")} (previous archived to ${commit.archivedTo})`);
   else log(`Done -> ${path.join(outDir, "index.html")}`);
 
@@ -479,6 +694,8 @@ async function finishArchive(
     cleanReport,
     changed: commit.changed,
     archivedTo: commit.archivedTo,
+    filedAs: commit.filedAs,
     ...(keepJsReport ? { keepJs: keepJsReport } : {}),
+    ...(opts.snapshot ? { snapshot: opts.snapshot } : {}),
   };
 }

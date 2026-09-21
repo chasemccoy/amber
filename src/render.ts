@@ -9,6 +9,7 @@
 
 import { pathToFileURL } from "node:url";
 import { AmberError } from "./errors.js";
+import { decodeHtml } from "./charset.js";
 
 export const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
@@ -29,7 +30,7 @@ export interface RenderResult {
   html: string;
   finalUrl: string;
   baseUrl: string;
-  /** url (without fragment) -> bytes the browser already downloaded. */
+  /** url (without fragment) -> bytes the browser already downloaded (2xx only). */
   resources: Map<string, RenderedResource>;
   /** Viewport JPEG taken after the page settled — the library index thumbnail. */
   thumbnail?: Buffer;
@@ -46,6 +47,28 @@ export interface RenderOptions {
    * recording never captured.
    */
   deterministicRandom?: boolean;
+  /**
+   * Answer every network request the page makes from this function instead
+   * of the network (the Wayback keep-js path: the browser navigates to the
+   * ORIGINAL url and each request is served from the archive at a timestamp,
+   * so the page's own JS runs against its own era's assets and every recorded
+   * URL stays in the original URL space). Return null to block the request.
+   */
+  fulfill?: (url: string, resourceType: string) => Promise<FulfilledResponse | null>;
+  /**
+   * Rewrite the main document's HTML before the browser parses it (keep-js:
+   * strip tracker scripts so the render runs exactly the code the archive
+   * will replay — a tracker that consumed Math.random during the render
+   * would otherwise shift every seeded choice made after it). Top-level
+   * navigation only; the result is served as UTF-8.
+   */
+  transformDocument?: (html: string) => string;
+}
+
+export interface FulfilledResponse {
+  status: number;
+  contentType: string;
+  body: Buffer;
 }
 
 /** Mulberry32 over a fixed seed — tiny, and identical in render + shim. */
@@ -122,6 +145,49 @@ export async function renderPage(url: string, opts: RenderOptions): Promise<Rend
     });
     const page = await context.newPage();
     if (opts.deterministicRandom) await page.addInitScript(SEEDED_RANDOM_SNIPPET);
+    const transform = opts.transformDocument;
+    const isMainDocument = (req: import("playwright").Request) =>
+      req.resourceType() === "document" && req.frame() === page.mainFrame();
+    const transformed = (body: Buffer, contentType: string | undefined) => ({
+      body: Buffer.from(transform!(decodeHtml(body, contentType)), "utf8"),
+      contentType: "text/html; charset=utf-8",
+    });
+    if (opts.fulfill) {
+      const fulfill = opts.fulfill;
+      await page.route("**/*", async (route) => {
+        const req = route.request();
+        try {
+          let r = await fulfill(req.url(), req.resourceType());
+          if (!r) return await route.abort("blockedbyclient");
+          if (transform && isMainDocument(req) && r.status >= 200 && r.status < 300) {
+            r = { ...r, ...transformed(r.body, r.contentType) };
+          }
+          await route.fulfill({ status: r.status, headers: { "content-type": r.contentType }, body: r.body });
+        } catch {
+          await route.abort("failed").catch(() => {});
+        }
+      });
+    } else if (transform) {
+      await page.route("**/*", async (route) => {
+        const req = route.request();
+        if (!isMainDocument(req)) return await route.continue();
+        try {
+          // Redirects are left to the browser so the page's URL — and every
+          // relative resolution against it — stays what it would have been.
+          const res = await route.fetch({ maxRedirects: 0 });
+          const status = res.status();
+          if (status < 200 || status >= 300) return await route.fulfill({ response: res });
+          const headers: Record<string, string> = {};
+          for (const [k, v] of Object.entries(res.headers())) {
+            if (!/^(content-length|content-encoding|transfer-encoding|content-type)$/i.test(k)) headers[k] = v;
+          }
+          const doc = transformed(await res.body(), res.headers()["content-type"]);
+          await route.fulfill({ status, headers: { ...headers, "content-type": doc.contentType }, body: doc.body });
+        } catch {
+          await route.continue().catch(() => {});
+        }
+      });
+    }
 
     const resources = new Map<string, RenderedResource>();
     const pending: Promise<void>[] = [];
@@ -131,6 +197,12 @@ export async function renderPage(url: string, opts: RenderOptions): Promise<Rend
           try {
             const req = resp.request();
             if (req.resourceType() === "document") return; // the page HTML, not an asset
+            // Only complete, successful bodies. A 404's error page must never
+            // be localised as the asset it stood in for — a Wayback miss is a
+            // full HTML page, which inlined into a <script> is a syntax error —
+            // and a 206 is a range slice, not the file.
+            const status = resp.status();
+            if (status < 200 || status >= 300 || status === 206) return;
             const ct = resp.headers()["content-type"] ?? "";
             const body = await resp.body();
             resources.set(resp.url().split("#")[0]!, {

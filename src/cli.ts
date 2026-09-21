@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 import { archiveUrl, defaultArchiveDir } from "./pipeline.js";
+import { parseWaybackUrl } from "./wayback.js";
 import { runDoctor } from "./doctor.js";
 import { AmberError } from "./errors.js";
 
@@ -54,6 +55,15 @@ options:
                      that the presentation needs the JS (canvas/WebGL, scroll
                      choreography), amber escalates to keep-js automatically.
   --no-keep-js       never keep JS, even when the plan recommends it
+  --at <date>        archive the page as it WAS, via the Wayback Machine:
+                     "2009", "2009-06-15", a 14-digit Wayback stamp, or
+                     "latest" (the most recent capture — for dead sites).
+                     Filed under the original URL and dated by the snapshot,
+                     so live and historical captures form one timeline.
+                     Passing a web.archive.org URL does the same thing.
+                     Combine with --keep-js to run the era's JavaScript: the
+                     page renders in Chromium with every request answered
+                     from the archive (slow, but the 2010 carousel spins).
   --timeout <ms>     capture timeout (default 45000)
   --insecure-tls     tolerate a trusted MITM proxy (or $AMBER_INSECURE_TLS=1)
   -q, --quiet        suppress progress output
@@ -229,6 +239,7 @@ async function main(): Promise<number> {
         overwrite: { type: "boolean", default: false }, // replace latest in place, no history
         "keep-js": { type: "boolean", default: false }, // force runtime preservation on
         "no-keep-js": { type: "boolean", default: false }, // forbid it (default: Claude decides)
+        at: { type: "string" }, // historical capture via the Wayback Machine
         quiet: { type: "boolean", short: "q", default: false },
         help: { type: "boolean", short: "h", default: false },
         version: { type: "boolean", default: false },
@@ -268,6 +279,11 @@ async function main(): Promise<number> {
     console.error("error: --keep-js and --no-keep-js are mutually exclusive");
     return 2;
   }
+  const historical = values.at !== undefined || parseWaybackUrl(url) !== null;
+  if (historical && values.playwright) {
+    console.error("error: a Wayback capture is fetched from the archive, not rendered; drop --playwright (use --keep-js to run its JavaScript)");
+    return 2;
+  }
 
   const res = await archiveUrl(url, {
     outRoot: values.out!,
@@ -280,12 +296,17 @@ async function main(): Promise<number> {
     overwrite: values.overwrite,
     keepJs: values["keep-js"] ? true : undefined,
     autoKeepJs: !values["no-keep-js"],
+    at: values.at,
     verbose: !values.quiet,
   });
 
   if (!values.quiet) {
     if (!res.changed) {
       console.log(`\nUnchanged since the last archive — kept: ${res.outDir}/`);
+    } else if (res.filedAs) {
+      console.log(`\nHistorical version filed as: ${res.filedAs}/`);
+      console.log(`  (the latest at ${res.outDir}/ is newer and was left in place)`);
+      console.log(`  open ${res.filedAs}/index.html`);
     } else {
       console.log(`\nArchive written to: ${res.outDir}/`);
       if (res.archivedTo) console.log(`  previous snapshot archived to ${res.archivedTo}/`);
