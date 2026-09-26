@@ -217,7 +217,11 @@ export async function renderPage(url: string, opts: RenderOptions): Promise<Rend
       );
     });
 
-    await page.goto(url, { waitUntil: "networkidle", timeout: opts.timeoutMs });
+    // "load" is the hard requirement; network-idle is best effort. Sites with
+    // analytics heartbeats or long-polling never go idle, and failing the
+    // whole capture over that (anthropic.com) is worse than a settle window.
+    await page.goto(url, { waitUntil: "load", timeout: opts.timeoutMs });
+    await page.waitForLoadState("networkidle", { timeout: Math.min(15_000, opts.timeoutMs) }).catch(() => {});
     await autoScroll(page, opts.deterministicRandom).catch(() => {});
     await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
     await Promise.allSettled(pending);

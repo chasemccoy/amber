@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.3 — 2026-09-26
+
+- Browser renders wait for `load` and then give network-idle a 15s settle
+  window instead of requiring it: pages with analytics heartbeats or
+  long-polling never go idle and were failing the whole capture with
+  `page.goto: Timeout exceeded`.
+
 ## 0.8.2 — 2026-09-26
 
 - A slug folder holding leftovers but no valid snapshot (an `assets/` tree
