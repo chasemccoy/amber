@@ -105,7 +105,7 @@ export interface KeepJsOptions {
 // Third-party analytics/consent/ads — removed even in keep-js mode. The point
 // of the flag is the page's own runtime, not its surveillance.
 const TRACKER_SRC =
-  /googletagmanager|google-analytics|gtag\/js|doubleclick|adsbygoogle|facebook\.net|fbevents|hotjar|clarity\.ms|segment\.(?:com|io)|cdn\.segment|plausible\.io|usefathom|matomo|mixpanel|amplitude|fullstory|intercom(?:cdn)?\.|sentry(?:-cdn)?\.|newrelic|cookiebot|cookielaw|onetrust|consentmanager|quantserve|scorecardresearch|chartbeat|parsely|criteo|taboola|outbrain|tellapart/i;
+  /googletagmanager|google-analytics|gtag\/js|doubleclick|adsbygoogle|facebook\.net|fbevents|hotjar|clarity\.ms|segment\.(?:com|io)|cdn\.segment|plausible\.io|usefathom|matomo|mixpanel|amplitude|fullstory|intercom(?:cdn)?\.|sentry(?:-cdn)?\.|newrelic|cookiebot|cookielaw|onetrust|consentmanager|quantserve|scorecardresearch|chartbeat|parsely|criteo|taboola|outbrain|tellapart|isolated-segment/i;
 // The last three are the 2000s-era Google Analytics snippets (document.write
 // of ga.js, _gat._getTracker, _gaq.push) and TellApart retargeting.
 const TRACKER_INLINE =
@@ -164,6 +164,15 @@ export async function applyKeepJs($: CheerioAPI, opts: KeepJsOptions): Promise<K
   };
 
   // -- 1. classify ---------------------------------------------------------
+  // Analytics iframes (Segment's isolated-segment.html and friends) are not
+  // scripts, but they are the same surveillance — and offline they only
+  // produce CSP errors.
+  for (const el of $("iframe[src]").toArray()) {
+    if (TRACKER_SRC.test($(el).attr("src")!)) {
+      $(el).remove();
+      report.trackersRemoved++;
+    }
+  }
   const moduleParts: Array<{ kind: "url"; url: string } | { kind: "inline"; code: string }> = [];
   for (const el of $("script").toArray()) {
     const type = $(el).attr("type");
@@ -419,6 +428,16 @@ export function finalizeKeepJsDelivery(
 
   // 2. Local scripts (the flattened bundle) -> inline. "</script" inside JS
   // only occurs within string/regex literals, where "\/" === "/".
+  // The original URL travels along as data-amber-src: bundler runtimes
+  // (Turbopack's registerChunk) identify the chunk that just ran by
+  // document.currentScript.src, and the shim serves it from there.
+  const originalUrlOf = new Map<string, string>();
+  try {
+    const mapJson = $("#amber-asset-map").html();
+    if (mapJson) for (const [url, rel] of Object.entries(JSON.parse(mapJson) as Record<string, string>)) originalUrlOf.set(rel, url);
+  } catch {
+    /* no map (tests / no runtime pass) — scripts inline without provenance */
+  }
   for (const el of $("script[src]").toArray()) {
     const src = $(el).attr("src")!;
     if (!isAssetRef(src)) continue;
@@ -430,6 +449,8 @@ export function finalizeKeepJsDelivery(
       continue;
     }
     $(el).removeAttr("src");
+    const orig = originalUrlOf.get(src);
+    if (orig) $(el).attr("data-amber-src", orig);
     $(el).text(js.replace(/<\/script/gi, "<\\/script"));
   }
 
@@ -994,6 +1015,33 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
       return pre + q + mapAsset(u.replace(/&amp;/g, '&')) + q;
     });
   };
+  // Inlined scripts have no src, but bundler runtimes (Turbopack's
+  // registerChunk) identify the chunk that just ran by
+  // document.currentScript.src / getAttribute('src'). Hand back the original
+  // path, resolved against wherever the archive is viewed from — the same
+  // way the runtime resolves its own chunk list.
+  var csDesc = window.Document && Object.getOwnPropertyDescriptor(Document.prototype, 'currentScript');
+  if (csDesc && csDesc.get && typeof Proxy === 'function') {
+    Object.defineProperty(Document.prototype, 'currentScript', {
+      configurable: true,
+      get: function () {
+        var s = csDesc.get.call(this);
+        var orig = s && !s.getAttribute('src') && s.getAttribute('data-amber-src');
+        if (!orig) return s;
+        var src;
+        try { var u = new URL(orig); src = new URL(u.pathname + u.search, location.href).href; } catch (_) { src = orig; }
+        return new Proxy(s, {
+          get: function (t, p) {
+            if (p === 'src') return src;
+            if (p === 'getAttribute') return function (n) { return String(n).toLowerCase() === 'src' ? src : t.getAttribute(n); };
+            var v = t[p];
+            return typeof v === 'function' ? v.bind(t) : v;
+          },
+        });
+      },
+    });
+  }
+
   ['write', 'writeln'].forEach(function (fn) {
     var orig = document[fn];
     if (typeof orig !== 'function') return;

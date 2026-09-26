@@ -41,6 +41,7 @@ const HTML = `<html><head>
   <script>document.write("<scr"+"ipt src='http://www.google-analytics.com/ga.js'></scr"+"ipt>");</script>
   <script>try { var t = _gat._getTracker("UA-1"); t._trackPageview(); } catch (e) {}</script>
   <script src="http://static.tellapart.com/crumb.js"></script>
+  <iframe src="https://a.example.com/isolated-segment.html?v=1"></iframe>
   <script type="module" src="/assets/app.js"></script>
   <script>window.classicKept = true;</script>
 </head><body><p>hi</p></body></html>`;
@@ -55,7 +56,7 @@ test("applyKeepJs removes trackers, keeps classic, flattens modules, injects shi
 
   const report = await applyKeepJs($, { pageUrl: PAGE, resources, rootDir: root });
 
-  assert.equal(report.trackersRemoved, 5); // gtm src + dataLayer inline + 2000s-era GA (write + _gat) + tellapart
+  assert.equal(report.trackersRemoved, 6); // gtm src + dataLayer inline + 2000s-era GA (write + _gat) + tellapart + segment iframe
   assert.equal(report.modulesBundled, 1);
   assert.equal(report.classicKept, 1);
   assert.equal(report.warnings.length, 0);
@@ -157,7 +158,7 @@ function fakeArchive(): { root: string; $: import("cheerio").CheerioAPI } {
   fs.writeFileSync(path.join(root, "assets/static/app-bundle-abc.js"), `console.log("</script>")`);
   const $ = cheerio.load(`<html><head>
     <link rel="stylesheet" href="assets/static/site-abc.css">
-    <script type="application/json" id="amber-asset-map">{"https://example.com/pic.png":"assets/images/pic-abc.png"}</script>
+    <script type="application/json" id="amber-asset-map">{"https://example.com/pic.png":"assets/images/pic-abc.png","https://example.com/_next/static/chunks/app.js":"assets/static/app-bundle-abc.js"}</script>
   </head><body>
     <img src="assets/images/pic-abc.png" srcset="assets/images/pic-abc.png 2x">
     <script data-amber="bundle" src="assets/static/app-bundle-abc.js"></script>
@@ -186,6 +187,8 @@ test("finalizeKeepJsDelivery inlines everything into a single file and removes a
   // bundle inlined with </script> escaped
   assert.doesNotMatch(html, /app-bundle-abc\.js/);
   assert.match(html, /console\.log\("<\\\/script>"\)/);
+  // …but keeps its provenance for runtimes that read currentScript.src.
+  assert.match(html, /<script data-amber="bundle" data-amber-src="https:\/\/example\.com\/_next\/static\/chunks\/app\.js">/);
   // asset map values are data: URIs now
   assert.match(html, new RegExp(`"https://example\\.com/pic\\.png":"data:image/png;base64,${b64("PNG!")}"`));
   assert.doesNotMatch(html, /assets\/images\/pic-abc\.png/);

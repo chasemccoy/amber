@@ -85,6 +85,9 @@ function runShim(
     setAttribute(name: string, value: string) {
       this.attrs[name] = value;
     }
+    getAttribute(name: string) {
+      return this.attrs[name] ?? null;
+    }
   }
   const withSrc = (tag: string) => {
     const C = class extends FakeElement {
@@ -219,6 +222,16 @@ function runShim(
     configurable: true,
   });
   sandbox.HTMLLinkElement = HTMLLinkElement;
+  // document.currentScript, as Chromium exposes it: a prototype accessor.
+  class FakeDocument {
+    get currentScript() {
+      return (this as any)._current ?? null;
+    }
+  }
+  Object.setPrototypeOf(sandbox.document, FakeDocument.prototype);
+  sandbox.Document = FakeDocument;
+  sandbox.Proxy = Proxy;
+  sandbox.Reflect = Reflect;
   sandbox.window = sandbox;
   sandbox.self = sandbox;
   sandbox.fetch = opts?.realFetch ?? (() => Promise.resolve("REAL-FETCH"));
@@ -466,4 +479,32 @@ test("seeded Math.random is deterministic and identical in render and replay", a
   const { shimSrc, replayJson } = await buildShim();
   const sb = runShim(shimSrc, replayJson);
   assert.deepEqual([sb.Math.random(), sb.Math.random(), sb.Math.random()], render);
+});
+
+test("shim gives inlined chunks their original src back through document.currentScript", async () => {
+  const { shimSrc, replayJson } = await buildShim();
+  const sb = runShim(shimSrc, replayJson);
+
+  // anthropic.com regression: Turbopack's registerChunk reads
+  // document.currentScript.src to learn which chunk just ran; inlined
+  // scripts have none, so every chunk registration rejected and the hero
+  // never booted. The path is resolved against the ARCHIVE's location.
+  const inlined = new sb.Element();
+  inlined._tag = "SCRIPT";
+  inlined.setAttribute("data-amber-src", "https://www.example.com/_next/static/chunks/app.js?v=1");
+  sb.document._current = inlined;
+  const cs = sb.document.currentScript;
+  assert.equal(cs.src, "file:///_next/static/chunks/app.js?v=1");
+  assert.equal(cs.getAttribute("src"), "file:///_next/static/chunks/app.js?v=1");
+  assert.equal(cs.getAttribute("data-amber-src"), "https://www.example.com/_next/static/chunks/app.js?v=1", "other attributes pass through");
+  assert.equal(cs.tagName, "SCRIPT");
+
+  // A script that still has a real src is handed back untouched.
+  const external = new sb.Element();
+  external._tag = "SCRIPT";
+  external.setAttribute("src", "assets/static/lib.js");
+  sb.document._current = external;
+  assert.equal(sb.document.currentScript, external);
+  sb.document._current = null;
+  assert.equal(sb.document.currentScript, null);
 });

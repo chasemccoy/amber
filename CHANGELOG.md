@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.4 — 2026-09-26
+
+- **Keep-js works for Turbopack/Next.js apps.** The single-file inliner
+  strips `src` from scripts, but Turbopack's runtime identifies the chunk
+  that just ran by `document.currentScript.src` — every chunk registration
+  rejected and the app never booted (anthropic.com). Inlined scripts now
+  carry their original URL as `data-amber-src` and the shim serves it back
+  through `currentScript`, resolved against the archive's own location.
+- Analytics iframes (Segment's `isolated-segment.html`) are removed in
+  keep-js mode like tracker scripts.
+
 ## 0.8.3 — 2026-09-26
 
 - Browser renders wait for `load` and then give network-idle a 15s settle
