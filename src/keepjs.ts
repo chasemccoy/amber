@@ -1016,20 +1016,37 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
     });
   };
   // Inlined scripts have no src, but bundler runtimes (Turbopack's
-  // registerChunk) identify the chunk that just ran by
-  // document.currentScript.src / getAttribute('src'). Hand back the original
-  // path, resolved against wherever the archive is viewed from — the same
-  // way the runtime resolves its own chunk list.
+  // registerChunk) key chunks by document.currentScript.getAttribute('src')
+  // — the attribute as written in the original page: root-relative for
+  // same-origin chunks, absolute for CDN ones. Runtime-injected chunks whose
+  // src the patches above mapped to a local/data: value are recognised by
+  // reverse lookup and get the same treatment.
+  var reverseMap = null;
+  var originalOf = function (mapped) {
+    if (!reverseMap) {
+      reverseMap = {};
+      var m = getAssetMap();
+      for (var k in m) reverseMap[m[k]] = k;
+    }
+    return reverseMap[mapped] || null;
+  };
+  var asWritten = function (orig) {
+    try {
+      var u = new URL(orig), b = new URL(DATA.base);
+      return u.origin === b.origin ? u.pathname + u.search : orig;
+    } catch (_) { return orig; }
+  };
   var csDesc = window.Document && Object.getOwnPropertyDescriptor(Document.prototype, 'currentScript');
   if (csDesc && csDesc.get && typeof Proxy === 'function') {
     Object.defineProperty(Document.prototype, 'currentScript', {
       configurable: true,
       get: function () {
         var s = csDesc.get.call(this);
-        var orig = s && !s.getAttribute('src') && s.getAttribute('data-amber-src');
+        if (!s) return s;
+        var attr = s.getAttribute('src');
+        var orig = attr ? originalOf(attr) : s.getAttribute('data-amber-src');
         if (!orig) return s;
-        var src;
-        try { var u = new URL(orig); src = new URL(u.pathname + u.search, location.href).href; } catch (_) { src = orig; }
+        var src = asWritten(orig);
         return new Proxy(s, {
           get: function (t, p) {
             if (p === 'src') return src;

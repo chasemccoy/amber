@@ -485,24 +485,39 @@ test("shim gives inlined chunks their original src back through document.current
   const { shimSrc, replayJson } = await buildShim();
   const sb = runShim(shimSrc, replayJson);
 
-  // anthropic.com regression: Turbopack's registerChunk reads
-  // document.currentScript.src to learn which chunk just ran; inlined
-  // scripts have none, so every chunk registration rejected and the hero
-  // never booted. The path is resolved against the ARCHIVE's location.
+  // anthropic.com regression: Turbopack keys every chunk by
+  // document.currentScript.getAttribute('src') AS WRITTEN — root-relative for
+  // same-origin chunks — and waits for that key to register. Inlined scripts
+  // have no src, so nothing ever registered and the app never booted.
   const inlined = new sb.Element();
   inlined._tag = "SCRIPT";
-  inlined.setAttribute("data-amber-src", "https://www.example.com/_next/static/chunks/app.js?v=1");
+  inlined.setAttribute("data-amber-src", "https://example.com/_next/static/chunks/app.js?v=1");
   sb.document._current = inlined;
-  const cs = sb.document.currentScript;
-  assert.equal(cs.src, "file:///_next/static/chunks/app.js?v=1");
-  assert.equal(cs.getAttribute("src"), "file:///_next/static/chunks/app.js?v=1");
-  assert.equal(cs.getAttribute("data-amber-src"), "https://www.example.com/_next/static/chunks/app.js?v=1", "other attributes pass through");
+  let cs = sb.document.currentScript;
+  assert.equal(cs.getAttribute("src"), "/_next/static/chunks/app.js?v=1");
+  assert.equal(cs.src, "/_next/static/chunks/app.js?v=1");
+  assert.equal(cs.getAttribute("data-amber-src"), "https://example.com/_next/static/chunks/app.js?v=1", "other attributes pass through");
   assert.equal(cs.tagName, "SCRIPT");
 
-  // A script that still has a real src is handed back untouched.
+  // A CDN chunk was written absolute, so it stays absolute.
+  const cdn = new sb.Element();
+  cdn._tag = "SCRIPT";
+  cdn.setAttribute("data-amber-src", "https://cdn.example.net/lib/jquery.min.js");
+  sb.document._current = cdn;
+  assert.equal(sb.document.currentScript.getAttribute("src"), "https://cdn.example.net/lib/jquery.min.js");
+
+  // A chunk the runtime injected itself: its src was mapped to the local copy
+  // by the patches above — recognised by reverse lookup through the asset map.
+  const injected = new sb.Element();
+  injected._tag = "SCRIPT";
+  injected.setAttribute("src", "assets/static/jquery.min-abc.js");
+  sb.document._current = injected;
+  assert.equal(sb.document.currentScript.getAttribute("src"), "https://cdn.example.net/lib/jquery.min.js");
+
+  // Anything else is handed back untouched.
   const external = new sb.Element();
   external._tag = "SCRIPT";
-  external.setAttribute("src", "assets/static/lib.js");
+  external.setAttribute("src", "https://unrelated.example/x.js");
   sb.document._current = external;
   assert.equal(sb.document.currentScript, external);
   sb.document._current = null;

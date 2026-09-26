@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.5 — 2026-09-26
+
+- Follow-up to 0.8.4: Turbopack keys chunks by `currentScript.getAttribute('src')`
+  *as written* (root-relative for same-origin chunks), not by the resolved
+  URL — the shim now hands that form back, and recognises chunks the runtime
+  injected itself (src already mapped to a local copy) by reverse lookup.
+
 ## 0.8.4 — 2026-09-26
 
 - **Keep-js works for Turbopack/Next.js apps.** The single-file inliner
