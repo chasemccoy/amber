@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.6 — 2026-09-26
+
+- `currentScript.src` is the resolved absolute URL again (Next's
+  `getAssetPrefix` does `new URL(src)`); 0.8.5 returned the root-relative
+  form there too and the app died one step after booting.
+
 ## 0.8.5 — 2026-09-26
 
 - Follow-up to 0.8.4: Turbopack keys chunks by `currentScript.getAttribute('src')`

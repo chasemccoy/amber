@@ -1,6 +1,6 @@
 {
   "name": "in-amber",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "description": "Save any web page as a clean, self-contained offline folder — deterministic capture, judgement by Claude.",
   "license": "MIT",
   "author": "Chase McCoy",

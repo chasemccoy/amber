@@ -1015,12 +1015,13 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
       return pre + q + mapAsset(u.replace(/&amp;/g, '&')) + q;
     });
   };
-  // Inlined scripts have no src, but bundler runtimes (Turbopack's
-  // registerChunk) key chunks by document.currentScript.getAttribute('src')
-  // — the attribute as written in the original page: root-relative for
-  // same-origin chunks, absolute for CDN ones. Runtime-injected chunks whose
-  // src the patches above mapped to a local/data: value are recognised by
-  // reverse lookup and get the same treatment.
+  // Inlined scripts have no src, but bundler runtimes read it off
+  // document.currentScript two ways, and a real element answers each
+  // differently: getAttribute('src') is the attribute AS WRITTEN (Turbopack
+  // keys chunks by it — root-relative for same-origin chunks, absolute for
+  // CDN ones) and .src is the resolved absolute URL (Next's getAssetPrefix
+  // does new URL(src)). Runtime-injected chunks whose src the patches above
+  // mapped to a local/data: value are recognised by reverse lookup.
   var reverseMap = null;
   var originalOf = function (mapped) {
     if (!reverseMap) {
@@ -1046,11 +1047,11 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
         var attr = s.getAttribute('src');
         var orig = attr ? originalOf(attr) : s.getAttribute('data-amber-src');
         if (!orig) return s;
-        var src = asWritten(orig);
+        var written = asWritten(orig);
         return new Proxy(s, {
           get: function (t, p) {
-            if (p === 'src') return src;
-            if (p === 'getAttribute') return function (n) { return String(n).toLowerCase() === 'src' ? src : t.getAttribute(n); };
+            if (p === 'src') return orig;
+            if (p === 'getAttribute') return function (n) { return String(n).toLowerCase() === 'src' ? written : t.getAttribute(n); };
             var v = t[p];
             return typeof v === 'function' ? v.bind(t) : v;
           },

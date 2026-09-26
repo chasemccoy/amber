@@ -494,8 +494,8 @@ test("shim gives inlined chunks their original src back through document.current
   inlined.setAttribute("data-amber-src", "https://example.com/_next/static/chunks/app.js?v=1");
   sb.document._current = inlined;
   let cs = sb.document.currentScript;
-  assert.equal(cs.getAttribute("src"), "/_next/static/chunks/app.js?v=1");
-  assert.equal(cs.src, "/_next/static/chunks/app.js?v=1");
+  assert.equal(cs.getAttribute("src"), "/_next/static/chunks/app.js?v=1", "the attribute as written (Turbopack's chunk key)");
+  assert.equal(cs.src, "https://example.com/_next/static/chunks/app.js?v=1", "the resolved URL (Next's getAssetPrefix does new URL(src))");
   assert.equal(cs.getAttribute("data-amber-src"), "https://example.com/_next/static/chunks/app.js?v=1", "other attributes pass through");
   assert.equal(cs.tagName, "SCRIPT");
 
