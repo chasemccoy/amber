@@ -256,6 +256,12 @@ export function commitSnapshot(stagingDir: string, outDir: string, opts: CommitO
     moveSnapshotInto(outDir, archivedTo); // rotate current latest into versions/
   } else if (hasLatest) {
     clearSnapshot(outDir); // --overwrite: discard the current latest, leave versions/ untouched.
+  } else {
+    // No valid snapshot at the root, but the folder may not be empty: an
+    // interrupted copy or a hand-pruned archive leaves an assets/ tree with
+    // no index.html/manifest. Nothing there is a snapshot worth keeping, and
+    // the per-entry rename below cannot merge into it.
+    clearSnapshot(outDir);
   }
 
   // Promote the staged build into the (now-cleared) root.

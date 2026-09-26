@@ -307,3 +307,24 @@ test("commitSnapshot dedupes a historical re-capture against every version of th
   assert.deepEqual(results, [true, true, false], "c matches the -2 sibling");
   assert.deepEqual(fs.readdirSync(path.join(outDir, "versions")).sort(), ["20090615T000000Z", "20090615T000000Z-2"]);
 });
+
+test("commitSnapshot promotes over a hollow root (stray assets/, no manifest) instead of failing the rename", () => {
+  const root = tmpdir();
+  const outDir = path.join(root, "site");
+  // What an interrupted copy leaves behind: an asset tree, no index/manifest.
+  fs.mkdirSync(path.join(outDir, "assets", "images"), { recursive: true });
+  fs.writeFileSync(path.join(outDir, "assets", "images", "stale.png"), "old");
+  fs.mkdirSync(path.join(outDir, "versions", "20200101T000000Z"), { recursive: true });
+  fs.writeFileSync(path.join(outDir, "versions", "20200101T000000Z", "index.html"), "<p>kept</p>");
+
+  const staging = path.join(root, "staging");
+  writeSnapshot(staging, { html: "<p>new</p>", asset: "fresh", capturedAt: "2026-09-26T12:00:00.000Z" });
+  const res = commitSnapshot(staging, outDir);
+
+  assert.equal(res.changed, true);
+  assert.equal(res.archivedTo, null, "nothing valid to rotate");
+  assert.match(fs.readFileSync(path.join(outDir, "index.html"), "utf8"), /new/);
+  assert.ok(!fs.existsSync(path.join(outDir, "assets", "images", "stale.png")), "stray assets cleared");
+  assert.equal(fs.readFileSync(path.join(outDir, "assets", "images", "a.png"), "utf8"), "fresh");
+  assert.ok(fs.existsSync(path.join(outDir, "versions", "20200101T000000Z", "index.html")), "versions/ untouched");
+});

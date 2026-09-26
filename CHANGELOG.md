@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.2 — 2026-09-26
+
+- A slug folder holding leftovers but no valid snapshot (an `assets/` tree
+  with no `index.html`/`manifest.json`, as an interrupted copy leaves) no
+  longer makes the archive fail with `ENOTEMPTY` — it is cleared and the new
+  capture promoted over it; `versions/` is untouched.
+
 ## 0.8.1 — 2026-09-20
 
 - `--overwrite` on a historical version now replaces the folder's *contents*
