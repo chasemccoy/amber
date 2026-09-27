@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.8 — 2026-09-26
+
+- Render auto-scroll drives the page with real wheel input instead of
+  `window.scrollBy`: smooth-scroll libraries (Lenis and kin) snap scripted
+  scrolls straight back, so on those pages the sweep never left the first
+  screens and nothing below the fold loaded. Reads the position back to know
+  when it has reached the bottom.
+
 ## 0.8.7 — 2026-09-26
 
 - Keep-js renders now dwell while scrolling (a pause per viewport, a hold at

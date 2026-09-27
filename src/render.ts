@@ -89,37 +89,51 @@ export const SEEDED_RANDOM_SNIPPET = `(function () {
  * offline replay won't have.
  */
 async function autoScroll(page: import("playwright").Page, dense = false): Promise<void> {
-  await page.evaluate(async ({ step, interval, dwell }: { step: number; interval: number; dwell: number }) => {
-    // This callback runs in the browser. Reach the window/document globals via
-    // globalThis so the file doesn't require the DOM lib when type-checked by a
-    // consumer that imports amber (e.g. a Node server without "DOM" in its lib).
-    const w = globalThis as unknown as {
-      innerHeight: number;
-      scrollBy: (x: number, y: number) => void;
-      scrollTo: (x: number, y: number) => void;
-      document: { body: { scrollHeight: number } };
-    };
-    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-    let total = 0;
-    let sinceDwell = 0;
-    while (total < w.document.body.scrollHeight + w.innerHeight) {
-      w.scrollBy(0, step);
-      total += step;
-      sinceDwell += step;
-      await sleep(interval);
-      // keep-js: pause once per viewport so IntersectionObserver-gated
-      // sections (lazy chunks, a WebGL prefooter that mounts when it comes
-      // into view) get to fire and start their loads while still on screen.
-      if (dwell && sinceDwell >= w.innerHeight) {
-        sinceDwell = 0;
-        await sleep(dwell);
-      }
+  // Real wheel input, not window.scrollBy: smooth-scroll libraries (Lenis and
+  // kin) own the scroll position and snap programmatic scrolls straight back,
+  // so on those pages a scripted sweep never leaves the first screens and
+  // nothing below the fold — lazy chunks, a prefooter scene — ever loads.
+  // Wheel events go through the library like a user's would.
+  const { step, interval, dwell } = dense ? { step: 250, interval: 60, dwell: 300 } : { step: 600, interval: 80, dwell: 0 };
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  const position = () =>
+    page.evaluate(() => {
+      const w = globalThis as unknown as { scrollY: number; innerHeight: number; document: { documentElement: { scrollHeight: number } } };
+      return { y: w.scrollY, viewport: w.innerHeight, height: w.document.documentElement.scrollHeight };
+    });
+  const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+  await page.mouse.move(vp.width / 2, vp.height / 2);
+
+  let sinceDwell = 0;
+  let stalled = 0;
+  let last = -1;
+  for (let i = 0; i < 2000; i++) {
+    await page.mouse.wheel(0, step);
+    await sleep(interval);
+    sinceDwell += step;
+    // keep-js: pause once per viewport so IntersectionObserver-gated sections
+    // fire and start their loads while still on screen.
+    if (dwell && sinceDwell >= vp.height) {
+      sinceDwell = 0;
+      await sleep(dwell);
     }
-    // Hold the bottom: whatever the last section kicked off (a lazily loaded
-    // scene fetching its textures) needs the section to still be in view.
-    if (dwell) await sleep(dwell * 4);
-    w.scrollTo(0, 0);
-  }, dense ? { step: 250, interval: 60, dwell: 300 } : { step: 600, interval: 80, dwell: 0 });
+    const { y, viewport, height } = await position();
+    if (y + viewport >= height - 2) break;
+    // Smooth-scroll easing lags the wheel; only give up after it stops moving.
+    stalled = y <= last ? stalled + 1 : 0;
+    last = y;
+    if (stalled >= 8) break;
+  }
+  // Hold the bottom: whatever the last section kicked off (a lazily loaded
+  // scene fetching its textures) needs the section to still be in view.
+  if (dwell) await sleep(dwell * 4);
+
+  for (let i = 0; i < 400; i++) {
+    await page.mouse.wheel(0, -4000);
+    await sleep(interval);
+    if ((await position()).y <= 0) break;
+  }
+  await page.evaluate(() => (globalThis as unknown as { scrollTo: (x: number, y: number) => void }).scrollTo(0, 0));
 }
 
 /**
