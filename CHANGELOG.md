@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.7 — 2026-09-26
+
+- Keep-js renders now dwell while scrolling (a pause per viewport, a hold at
+  the bottom, and a longer idle wait) so IntersectionObserver-gated sections
+  fire and their lazy chunks and textures get recorded — anthropic.com's
+  WebGL prefooter was missing from the archive because the sweep passed it
+  in a few frames.
+- The planner recognises an article whose opening screen is a canvas hero
+  (title/contents revealed by the scene) as needing its runtime; new
+  `article-with-canvas-hero` eval fixture.
+
 ## 0.8.6 — 2026-09-26
 
 - `currentScript.src` is the resolved absolute URL again (Next's

@@ -128,6 +128,12 @@ choreography (GSAP/Lenis/three.js-style), pages whose body is an empty SPA mount
 filled entirely by a JS bundle, or interactive/media work with no static \
 fallback. Signals in raw HTML: <canvas> elements, a near-empty <body> with one \
 large module bundle, animation-library scripts paired with little static text. \
+A page can be a long, real article and still need this: when its OPENING SCREEN \
+is a canvas hero — a full-width <canvas> at the top with the title, date, or \
+table of contents rendered or revealed by the scene (often inline opacity:0 / \
+visibility:hidden until it boots) — the archive would open on a black block, so \
+set true. A small or purely decorative canvas behind readable text (confetti, \
+particles, a sparkline) is not that. \
 When true the archiver keeps and bundles the page's own scripts (analytics and \
 trackers are still removed) — so reserve it for pages that genuinely need it.
 

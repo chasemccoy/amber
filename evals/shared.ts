@@ -203,6 +203,43 @@ export const RUNTIME_FIXTURES: RuntimeFixture[] = [
 <div class="loader">LOADING 0%</div></div></body></html>`,
   },
   {
+    name: "article-with-canvas-hero",
+    url: "https://www.anthropic.com/claude-opus-5-5",
+    preserveRuntime: true,
+    why: "a long, fully server-rendered announcement — but its hero is a WebGL scene on a canvas, with the title and table of contents hidden until the scene boots; statically the opening 1400px is a black block (real case: anthropic.com, 2026-09)",
+    html: `<!doctype html><html lang="en"><head><title>Introducing Claude Opus 5.5 \\ Anthropic</title>
+<link rel="stylesheet" href="/_next/static/chunks/2gepcixj9k_19.css">
+<script src="/_next/static/chunks/1ey0h8xsfa_wx.js" async></script>
+<script src="/_next/static/chunks/turbopack-1hsruj7cezfxl.js" async></script>
+<script>(self.__next_f=self.__next_f||[]).push([0])</script></head>
+<body><header class="SiteHeader-module__header"><a href="/" aria-label="Home">Anthropic</a>
+<nav><a href="/research">Research</a><a href="/policy">Policy</a><a href="/news">News</a><a href="https://claude.ai">Try Claude</a></nav></header>
+<main id="main-content"><div class="TuskSanityContainer-module__page">
+<section aria-labelledby="lh-hero-title" class="TuskHero-module__tusk-hero" data-hero-nav="away"><div class="stage">
+<h1 class="TuskHero-module__visually-hidden" id="lh-hero-title">Claude Opus 5.5</h1>
+<canvas width="1280" height="720"></canvas>
+<svg viewBox="0 0 1280 720" aria-hidden="true" class="title"><text x="640" y="380" text-anchor="middle">Claude Opus 5.5</text></svg>
+<div class="landing" style="opacity:0;visibility:hidden"><p class="eyebrow">September 22, 2026</p>
+<nav aria-label="Contents"><ol class="toc"><li><a href="#introduction"><span class="n">(1)</span><span>Introduction</span></a></li>
+<li><a href="#performance-and-cost"><span class="n">(2)</span><span>Performance and cost</span></a></li>
+<li><a href="#safety"><span class="n">(3)</span><span>Safety</span></a></li>
+<li><a href="#availability"><span class="n">(4)</span><span>Availability</span></a></li></ol></nav></div></div></section>
+<article class="Prose-module__body">
+<h2 id="introduction">Introduction</h2>
+<p>We're introducing Claude Opus 5.5, the first model in a new generation. It sets new records on graduate-level reasoning, agentic coding, and long-horizon computer use, while holding the line on cost per task that made Opus 5 practical for production agents.</p>
+<p>Opus 5.5 is available today in the API, on claude.ai, and through the major cloud platforms, at the same price as Opus 5. Below we walk through what changed, what we measured, and what we still don't know.</p>
+<h2 id="performance-and-cost">Performance and cost</h2>
+<p>On SWE-bench Verified the model resolves 84.1% of tasks in a single attempt. On the agentic terminal benchmark it completes multi-hour tasks that previous models abandoned after a handful of tool calls. We report every number with the harness and prompt used, and publish the transcripts.</p>
+<p>Token efficiency improved alongside capability: the model reaches an answer in fewer turns, so the effective cost of a task fell even where the per-token price did not.</p>
+<h2 id="safety">Safety</h2>
+<p>Opus 5.5 ships under ASL-3 protections. The system card details the evaluations we ran for autonomy, cyber capability, and biological uplift, the mitigations in place, and the residual risks we believe remain. We also report several behaviors we found and fixed during training.</p>
+<h2 id="availability">Availability</h2>
+<p>Developers can start with the model id claude-opus-5-5 in the Messages API. Existing Opus 5 integrations need no changes beyond the id. Rate limits and pricing are unchanged.</p>
+</article></div></main>
+<footer class="SiteFooter-module__root"><nav><a href="/company">Company</a><a href="/careers">Careers</a><a href="/legal/privacy">Privacy</a></nav><p>© 2026 Anthropic PBC</p></footer>
+</body></html>`,
+  },
+  {
     name: "scroll-choreography-marketing",
     url: "https://agency.example/",
     preserveRuntime: true,

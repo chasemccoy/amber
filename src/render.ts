@@ -89,7 +89,7 @@ export const SEEDED_RANDOM_SNIPPET = `(function () {
  * offline replay won't have.
  */
 async function autoScroll(page: import("playwright").Page, dense = false): Promise<void> {
-  await page.evaluate(async ({ step, interval }: { step: number; interval: number }) => {
+  await page.evaluate(async ({ step, interval, dwell }: { step: number; interval: number; dwell: number }) => {
     // This callback runs in the browser. Reach the window/document globals via
     // globalThis so the file doesn't require the DOM lib when type-checked by a
     // consumer that imports amber (e.g. a Node server without "DOM" in its lib).
@@ -99,19 +99,27 @@ async function autoScroll(page: import("playwright").Page, dense = false): Promi
       scrollTo: (x: number, y: number) => void;
       document: { body: { scrollHeight: number } };
     };
-    await new Promise<void>((resolve) => {
-      let total = 0;
-      const timer = setInterval(() => {
-        w.scrollBy(0, step);
-        total += step;
-        if (total >= w.document.body.scrollHeight + w.innerHeight) {
-          clearInterval(timer);
-          w.scrollTo(0, 0);
-          resolve();
-        }
-      }, interval);
-    });
-  }, dense ? { step: 250, interval: 60 } : { step: 600, interval: 80 });
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    let total = 0;
+    let sinceDwell = 0;
+    while (total < w.document.body.scrollHeight + w.innerHeight) {
+      w.scrollBy(0, step);
+      total += step;
+      sinceDwell += step;
+      await sleep(interval);
+      // keep-js: pause once per viewport so IntersectionObserver-gated
+      // sections (lazy chunks, a WebGL prefooter that mounts when it comes
+      // into view) get to fire and start their loads while still on screen.
+      if (dwell && sinceDwell >= w.innerHeight) {
+        sinceDwell = 0;
+        await sleep(dwell);
+      }
+    }
+    // Hold the bottom: whatever the last section kicked off (a lazily loaded
+    // scene fetching its textures) needs the section to still be in view.
+    if (dwell) await sleep(dwell * 4);
+    w.scrollTo(0, 0);
+  }, dense ? { step: 250, interval: 60, dwell: 300 } : { step: 600, interval: 80, dwell: 0 });
 }
 
 /**
@@ -223,7 +231,9 @@ export async function renderPage(url: string, opts: RenderOptions): Promise<Rend
     await page.goto(url, { waitUntil: "load", timeout: opts.timeoutMs });
     await page.waitForLoadState("networkidle", { timeout: Math.min(15_000, opts.timeoutMs) }).catch(() => {});
     await autoScroll(page, opts.deterministicRandom).catch(() => {});
-    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+    // keep-js recordings need everything the scroll set in motion — lazy
+    // chunks and the assets they then request — so give idle real room.
+    await page.waitForLoadState("networkidle", { timeout: opts.deterministicRandom ? 20_000 : 5000 }).catch(() => {});
     await Promise.allSettled(pending);
 
     const html = await page.content();
