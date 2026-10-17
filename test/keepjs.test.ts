@@ -300,3 +300,24 @@ test("injectRuntimeAssets fills numeric-sequence gaps via fetch (scroll-scrub fr
     globalThis.fetch = realFetch;
   }
 });
+
+test("finalizeKeepJsDelivery makes runtime-loaded stylesheets self-contained before inlining them", () => {
+  const root = tmpdir();
+  fs.mkdirSync(path.join(root, "assets/static"), { recursive: true });
+  fs.writeFileSync(path.join(root, "assets/static/font-abc.woff2"), Buffer.from("WOFF"));
+  // butterfly.so/pond regression: Next.js injects this stylesheet at runtime;
+  // as a bare data: URI its relative font url() resolved to nothing.
+  fs.writeFileSync(path.join(root, "assets/static/late-abc.css"), '@font-face{font-family:x;src:url("font-abc.woff2")format("woff2")}');
+  const $ = cheerio.load(`<html><head>
+    <script type="application/json" id="amber-asset-map">{"https://example.com/_next/static/chunks/late.css":"assets/static/late-abc.css"}</script>
+  </head><body></body></html>`);
+  finalizeKeepJsDelivery($, root, emptyReport());
+
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const mapped = /"https:\/\/example\.com\/_next\/static\/chunks\/late\.css":"data:text\/css;base64,([A-Za-z0-9+/=]+)"/.exec(html);
+  assert.ok(mapped, "stylesheet inlined into the asset map");
+  const css = Buffer.from(mapped![1]!, "base64").toString("utf8");
+  assert.match(css, new RegExp(`url\\(data:font/woff2;base64,${Buffer.from("WOFF").toString("base64")}\\)`), "its font is inlined too");
+  assert.doesNotMatch(css, /font-abc\.woff2/);
+  fs.rmSync(root, { recursive: true, force: true });
+});

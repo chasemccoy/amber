@@ -485,8 +485,14 @@ export function finalizeKeepJsDelivery(
   if (mapEl.length) {
     const map = JSON.parse(mapEl.html()!.replace(/\\u003c/gi, "<")) as Record<string, string>;
     for (const [url, rel] of Object.entries(map)) {
-      if (isAssetRef(rel)) map[url] = token(rel);
-      else delete map[url];
+      if (!isAssetRef(rel)) {
+        delete map[url];
+        continue;
+      }
+      // A stylesheet the app loads at runtime becomes a data: URI, and a
+      // data: URI has no directory: its relative url()s (fonts, images) would
+      // resolve to nothing. Give the shim a copy with those refs inlined.
+      map[url] = /\.css$/i.test(rel) ? token(selfContainedCss(rootDir, rel)) : token(rel);
     }
     // data: URIs are pure base64 + mime — valid inside JSON strings unescaped.
     mapEl.html(JSON.stringify(map).replace(/</g, "\\u003c"));
@@ -498,6 +504,40 @@ export function finalizeKeepJsDelivery(
   fs.rmSync(assetsDir, { recursive: true, force: true });
   report.singleFile = true;
   report.inlinedBytes = total;
+}
+
+/**
+ * Write a sibling of the stylesheet at `rel` with every relative url() it
+ * contains inlined as a data: URI, and return the copy's relative path —
+ * falls back to `rel` itself when there is nothing to inline. Stylesheets are
+ * small and their referents are fonts and images, so this is built in memory.
+ */
+function selfContainedCss(rootDir: string, rel: string): string {
+  const abs = path.join(rootDir, rel.split("/").join(path.sep));
+  let css: string;
+  try {
+    css = fs.readFileSync(abs, "utf8");
+  } catch {
+    return rel;
+  }
+  const dir = path.posix.dirname(rel);
+  let changed = false;
+  const out = css.replace(CSS_URL, (m, _q, ref: string) => {
+    if (/^(data:|https?:|#|\/\/)/i.test(ref)) return m;
+    const target = path.posix.normalize(path.posix.join(dir, ref.split(/[?#]/)[0]!));
+    try {
+      const bytes = fs.readFileSync(path.join(rootDir, target.split("/").join(path.sep)));
+      const mime = (MIME[path.extname(target).toLowerCase()] ?? "application/octet-stream").split(";")[0]!;
+      changed = true;
+      return `url(data:${mime};base64,${bytes.toString("base64")})`;
+    } catch {
+      return m;
+    }
+  });
+  if (!changed) return rel;
+  const outRel = rel.replace(/\.css$/i, ".inlined.css");
+  fs.writeFileSync(path.join(rootDir, outRel.split("/").join(path.sep)), out);
+  return outRel;
 }
 
 /**
@@ -865,6 +905,7 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
       fire('loadend');
     }, 0);
   };
+  var RealXHR = window.XMLHttpRequest;
   window.XMLHttpRequest = AmberXHR;
 
   // SPA routers call history.pushState/replaceState with resolved URLs, which
@@ -992,9 +1033,67 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
   }
 
   var origSetAttr = Element.prototype.setAttribute;
+  var origSetAttrNS = Element.prototype.setAttributeNS;
+
+  // SVG sprites: <use href="/icons.svg#name"> pulls one symbol out of an
+  // external SVG document. Chrome refuses data: URLs there (and cross-origin
+  // file:// ones), so the archived sprite is parsed once, its contents are
+  // inlined into a hidden <svg>, and the reference becomes a local #name
+  // (butterfly.so/pond draws its headline type this way).
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  var XLINK_NS = 'http://www.w3.org/1999/xlink';
+  var sprites = {};
+  var spriteText = function (v) {
+    if (/^data:/i.test(v)) {
+      var comma = v.indexOf(',');
+      var meta = v.slice(5, comma), body = v.slice(comma + 1);
+      try { return /;base64/i.test(meta) ? new TextDecoder().decode(bytes(body)) : decodeURIComponent(body); } catch (_) { return null; }
+    }
+    try {
+      var x = new RealXHR();
+      x.open('GET', v, false);
+      x.send();
+      return x.status === 200 || x.status === 0 ? x.responseText : null;
+    } catch (_) { return null; }
+  };
+  var inlineSprite = function (url) {
+    var i = url.indexOf('#');
+    if (i <= 0) return null;
+    var frag = url.slice(i);
+    var m = getAssetMap();
+    var abs = normalize(url.slice(0, i));
+    var v = m[abs];
+    if (!v) { var q = stripQ(abs); for (var k in m) { if (stripQ(k) === q) { v = m[k]; break; } } }
+    if (!v) return null;
+    if (!(abs in sprites)) {
+      sprites[abs] = false;
+      var text = spriteText(v);
+      if (text && typeof DOMParser === 'function') {
+        try {
+          var src = new DOMParser().parseFromString(text, 'image/svg+xml').documentElement;
+          if (src && String(src.nodeName).toLowerCase() === 'svg') {
+            var holder = document.createElementNS(SVG_NS, 'svg');
+            origSetAttr.call(holder, 'aria-hidden', 'true');
+            origSetAttr.call(holder, 'data-amber', 'sprite');
+            origSetAttr.call(holder, 'style', 'position:absolute;width:0;height:0;overflow:hidden');
+            var kids = src.childNodes;
+            for (var j = 0; j < kids.length; j++) holder.appendChild(document.importNode(kids[j], true));
+            (document.body || document.documentElement).appendChild(holder);
+            sprites[abs] = true;
+          }
+        } catch (_) { /* unparseable — leave the reference alone */ }
+      }
+    }
+    return sprites[abs] ? frag : null;
+  };
+
   Element.prototype.setAttribute = function (name, value) {
     var n = String(name).toLowerCase();
     var tag = (this.tagName || '').toUpperCase();
+    if (tag === 'USE' && (n === 'href' || n === 'xlink:href') && typeof value === 'string') {
+      var local = inlineSprite(value);
+      if (local) return origSetAttr.call(this, name, local);
+    }
     // src/poster are always loads. href is only a LOAD on <link>/<use> —
     // remapping (and fail-closing) an <a href> would destroy normal links.
     var isLoad = n === 'src' || n === 'poster' ||
@@ -1003,6 +1102,33 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
     else if (n === 'style') value = mapCss(value);
     return origSetAttr.call(this, name, value);
   };
+  if (origSetAttrNS) {
+    Element.prototype.setAttributeNS = function (ns, name, value) {
+      var n = String(name).toLowerCase().replace(/^xlink:/, '');
+      if (n === 'href' && (this.tagName || '').toUpperCase() === 'USE' && typeof value === 'string') {
+        var local = inlineSprite(value);
+        if (local) return origSetAttrNS.call(this, ns, name, local);
+      }
+      return origSetAttrNS.call(this, ns, name, value);
+    };
+  }
+  // Server-rendered <use> elements never pass through setAttribute.
+  var fixUses = function () {
+    if (typeof document.querySelectorAll !== 'function') return;
+    var uses = document.querySelectorAll('use');
+    for (var i = 0; i < uses.length; i++) {
+      var u = uses[i];
+      var h = u.getAttribute('href'), ns = false;
+      if (!h && u.getAttributeNS) { h = u.getAttributeNS(XLINK_NS, 'href'); ns = true; }
+      if (!h || h.charAt(0) === '#') continue;
+      var local = inlineSprite(h);
+      if (!local) continue;
+      if (ns) origSetAttrNS.call(u, XLINK_NS, 'xlink:href', local);
+      else origSetAttr.call(u, 'href', local);
+    }
+  };
+  if (document.readyState === 'loading' && document.addEventListener) document.addEventListener('DOMContentLoaded', fixUses);
+  else { try { fixUses(); } catch (_) { /* no DOM yet */ } }
 
   // document.write('<script src="http://…/lib.js">') was how 2010 loaded CDN
   // libraries and analytics. The parser fetches those straight from the

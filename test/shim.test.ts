@@ -58,6 +58,9 @@ const ASSET_MAP_JSON = JSON.stringify({
   "https://example.com/img/pic.png": "assets/images/pic-abc.png",
   "https://example.com/films/1536/f_010.webp": "assets/images/f_010-abc.webp",
   "https://cdn.example.net/lib/jquery.min.js": "assets/static/jquery.min-abc.js",
+  "https://example.com/pond/assets/type.svg":
+    "data:image/svg+xml;base64," +
+    Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><defs><path id="early" d="M0 0h1"/><path id="preview" d="M0 0h2"/></defs></svg>').toString("base64"),
 });
 
 interface Sandbox {
@@ -144,6 +147,15 @@ function runShim(
   const sandbox: Sandbox = {
     document: {
       getElementById: (id: string) => els[id] ?? null,
+      createElementNS: (_ns: string, tag: string) => {
+        const el = new FakeElement() as any;
+        el._tag = tag;
+        el.children = [] as unknown[];
+        el.appendChild = (c: unknown) => el.children.push(c);
+        return el;
+      },
+      importNode: (n: unknown) => n,
+      body: { appended: [] as any[], appendChild(n: unknown) { (this as any).appended.push(n); } },
       write(...parts: string[]) {
         written.push(parts.join(""));
       },
@@ -152,6 +164,14 @@ function runShim(
       },
     },
     CSSStyleDeclaration: FakeStyle,
+    // Minimal SVG parsing for sprite inlining: the "document" is the markup
+    // itself; children are tagged strings so assertions can read them back.
+    DOMParser: class {
+      parseFromString(text: string) {
+        const inner = /<svg[^>]*>([\s\S]*)<\/svg>/.exec(text)?.[1] ?? "";
+        return { documentElement: { nodeName: "svg", childNodes: inner ? [inner] : [] } };
+      }
+    },
     location: { href: opts?.href ?? "file:///Users/t/archives/slug/index.html" },
     navigator: {},
     history: {
@@ -522,4 +542,39 @@ test("shim gives inlined chunks their original src back through document.current
   assert.equal(sb.document.currentScript, external);
   sb.document._current = null;
   assert.equal(sb.document.currentScript, null);
+});
+
+test("shim inlines external SVG sprites referenced by <use> and points them at #id", async () => {
+  const { shimSrc, replayJson } = await buildShim();
+  const sb = runShim(shimSrc, replayJson);
+
+  // butterfly.so/pond regression: the headline type is <use href=
+  // "/pond/assets/type.svg#early">. Chrome refuses data: URLs in <use>, so
+  // remapping to the data: copy rendered nothing — the sprite's contents are
+  // inlined once into a hidden <svg> and the reference becomes local.
+  const use1 = new sb.Element();
+  use1._tag = "use";
+  use1.setAttribute("href", "/pond/assets/type.svg#early");
+  assert.equal(use1.attrs["href"], "#early");
+  const holders = sb.document.body.appended;
+  assert.equal(holders.length, 1, "one hidden sprite holder");
+  assert.equal(holders[0].attrs["data-amber"], "sprite");
+  assert.match(String(holders[0].children[0]), /id="early"/);
+
+  // The same sprite is inlined once, however many references point into it.
+  const use2 = new sb.Element();
+  use2._tag = "use";
+  use2.setAttribute("href", "https://example.com/pond/assets/type.svg#preview");
+  assert.equal(use2.attrs["href"], "#preview");
+  assert.equal(holders.length, 1);
+
+  // Local fragments and unrecorded sprites are left to the usual rules.
+  const local = new sb.Element();
+  local._tag = "use";
+  local.setAttribute("href", "#already-local");
+  assert.equal(local.attrs["href"], "#already-local");
+  const missing = new sb.Element();
+  missing._tag = "use";
+  missing.setAttribute("href", "https://elsewhere.example/icons.svg#x");
+  assert.equal(missing.attrs["href"], "data:,", "unrecorded external sprite fails closed");
 });

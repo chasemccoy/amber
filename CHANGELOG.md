@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.9 — 2026-10-17
+
+- **SVG sprites in keep-js archives.** `<use href="/icons.svg#name">` pulls a
+  symbol from an external SVG file, and Chrome refuses `data:` URLs there —
+  so sprite-drawn elements came out blank (butterfly.so/pond's headline type).
+  The shim now inlines each recorded sprite once into a hidden `<svg>` and
+  points the reference at the local `#name`, for server-rendered and
+  script-created `<use>` alike.
+- Stylesheets an app loads at runtime are made self-contained before they
+  become `data:` URIs in a single-file archive: their relative `url()`s
+  (fonts, images) had nothing to resolve against.
+
 ## 0.8.8 — 2026-09-26
 
 - Render auto-scroll drives the page with real wheel input instead of
