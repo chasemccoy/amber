@@ -321,3 +321,28 @@ test("finalizeKeepJsDelivery makes runtime-loaded stylesheets self-contained bef
   assert.doesNotMatch(css, /font-abc\.woff2/);
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test("applyKeepJs inlines server-rendered SVG sprites and points <use> at the local #id", async () => {
+  const root = tmpdir();
+  const $ = cheerio.load(`<html><head></head><body>
+    <svg><use href="/pond/assets/type.svg#early"></use><use xlink:href="/pond/assets/type.svg#preview"></use></svg>
+    <svg><use href="/missing.svg#x"></use><use href="#local"></use></svg>
+  </body></html>`);
+  const resources = new Map<string, RenderedResource>([
+    ["https://example.com/pond/assets/type.svg", res('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><defs><path id="early" d="M0 0h1"/><path id="preview" d="M0 0h2"/></defs></svg>', "image/svg+xml")],
+  ]);
+  const report = await applyKeepJs($, { pageUrl: PAGE, resources, rootDir: root });
+
+  assert.equal(report.spritesInlined, 2);
+  assert.equal($('use[href="#early"]').length, 1);
+  // parse5 files xlink:href under its local name.
+  assert.equal($('use[href="#preview"]').length, 1);
+  const holder = $('svg[data-amber="sprite"]');
+  assert.equal(holder.length, 1, "one holder per sprite file");
+  assert.equal(holder.attr("data-src"), "https://example.com/pond/assets/type.svg");
+  assert.match(holder.html()!, /id="early"/);
+  // Unrecorded and already-local references are left alone.
+  assert.equal($('use[href="/missing.svg#x"]').length, 1);
+  assert.equal($('use[href="#local"]').length, 1);
+  fs.rmSync(root, { recursive: true, force: true });
+});

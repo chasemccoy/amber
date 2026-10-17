@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.10 — 2026-10-17
+
+- Follow-up to 0.8.9's SVG sprite support: server-rendered `<use>`
+  references are now rewritten at build time — each recorded sprite inlined
+  once into a hidden `<svg>` — so the parser never requests the external file,
+  and the shim re-attaches a sprite when the app's re-render removes it from
+  `<body>` (React recovering from a hydration mismatch did, leaving the
+  references pointing at nothing).
+
 ## 0.8.9 — 2026-10-17
 
 - **SVG sprites in keep-js archives.** `<use href="/icons.svg#name">` pulls a

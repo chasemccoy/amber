@@ -67,6 +67,8 @@ export interface KeepJsReport {
   chunksFetched: number;
   /** xhr/fetch responses embedded for the replay shim. */
   replayEntries: number;
+  /** Server-rendered <use> references pointed at an inlined SVG sprite. */
+  spritesInlined?: number;
   /** Runtime-loaded resources (JS-constructed URLs) localised for the src shim. */
   runtimeAssets: number;
   /**
@@ -238,6 +240,13 @@ export async function applyKeepJs($: CheerioAPI, opts: KeepJsOptions): Promise<K
       log(`      [keep-js] flattened ${moduleParts.length} module script(s) -> ${rel} (${report.bundleBytes} bytes)`);
     }
   }
+
+  // -- 2b. SVG sprites ------------------------------------------------------
+  // Server-rendered <use href="/sprite.svg#id"> is fetched by the parser
+  // before any script runs, and offline that file is either gone or a data:
+  // URI Chrome won't load in <use>. Inline each recorded sprite once and point
+  // the references at the local #id. (Script-created <use> is the shim's job.)
+  report.spritesInlined = inlineSvgSprites($, opts.pageUrl, opts.resources);
 
   // -- 3. replay shim for runtime-fetched data -----------------------------
   const replay: Array<{ url: string; ct: string; b: string }> = [];
@@ -685,6 +694,35 @@ exec node -e '${js}' "$DIR"
   fs.writeFileSync(file, script, { mode: 0o755 });
 }
 
+function inlineSvgSprites($: CheerioAPI, pageUrl: string, resources: Map<string, RenderedResource>): number {
+  const inlined = new Map<string, boolean>();
+  let refs = 0;
+  for (const el of $("use").toArray()) {
+    for (const attr of ["href", "xlink:href"]) {
+      const v = $(el).attr(attr);
+      const hash = v ? v.indexOf("#") : -1;
+      if (!v || hash <= 0) continue;
+      const abs = resolveUrl(v.slice(0, hash), pageUrl);
+      const res = abs ? resources.get(abs) : undefined;
+      if (!abs || !res) continue;
+      if (!inlined.has(abs)) {
+        const inner = /<svg\b[^>]*>([\s\S]*)<\/svg>\s*$/i.exec(res.body.toString("utf8"))?.[1];
+        inlined.set(abs, inner !== undefined);
+        if (inner === undefined) continue;
+        $("body").append(
+          `<svg aria-hidden="true" data-amber="sprite" data-src="${abs.replace(/"/g, "&quot;")}" ` +
+            `style="position:absolute;width:0;height:0;overflow:hidden">${inner}</svg>`,
+        );
+      }
+      if (inlined.get(abs)) {
+        $(el).attr(attr, v.slice(hash));
+        refs++;
+      }
+    }
+  }
+  return refs;
+}
+
 function resolveUrl(raw: string, base: string): string | null {
   try {
     const u = new URL(raw, base);
@@ -1056,18 +1094,25 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
       return x.status === 200 || x.status === 0 ? x.responseText : null;
     } catch (_) { return null; }
   };
+  // Holders amber inlined at build time carry data-src; reuse them rather
+  // than inlining the same sprite twice.
+  var findHolder = function (abs) {
+    if (typeof document.querySelectorAll !== 'function') return null;
+    var hs = document.querySelectorAll('svg[data-amber="sprite"]');
+    for (var i = 0; i < hs.length; i++) if (hs[i].getAttribute('data-src') === abs) return hs[i];
+    return null;
+  };
   var inlineSprite = function (url) {
     var i = url.indexOf('#');
     if (i <= 0) return null;
     var frag = url.slice(i);
-    var m = getAssetMap();
     var abs = normalize(url.slice(0, i));
-    var v = m[abs];
-    if (!v) { var q = stripQ(abs); for (var k in m) { if (stripQ(k) === q) { v = m[k]; break; } } }
-    if (!v) return null;
-    if (!(abs in sprites)) {
-      sprites[abs] = false;
-      var text = spriteText(v);
+    if (!sprites[abs]) sprites[abs] = findHolder(abs);
+    if (!sprites[abs]) {
+      var m = getAssetMap();
+      var v = m[abs];
+      if (!v) { var q = stripQ(abs); for (var k in m) { if (stripQ(k) === q) { v = m[k]; break; } } }
+      var text = v && spriteText(v);
       if (text && typeof DOMParser === 'function') {
         try {
           var src = new DOMParser().parseFromString(text, 'image/svg+xml').documentElement;
@@ -1075,16 +1120,21 @@ const REPLAY_SHIM = `${SEEDED_RANDOM_SNIPPET}
             var holder = document.createElementNS(SVG_NS, 'svg');
             origSetAttr.call(holder, 'aria-hidden', 'true');
             origSetAttr.call(holder, 'data-amber', 'sprite');
+            origSetAttr.call(holder, 'data-src', abs);
             origSetAttr.call(holder, 'style', 'position:absolute;width:0;height:0;overflow:hidden');
             var kids = src.childNodes;
             for (var j = 0; j < kids.length; j++) holder.appendChild(document.importNode(kids[j], true));
-            (document.body || document.documentElement).appendChild(holder);
-            sprites[abs] = true;
+            sprites[abs] = holder;
           }
         } catch (_) { /* unparseable — leave the reference alone */ }
       }
     }
-    return sprites[abs] ? frag : null;
+    var h = sprites[abs];
+    if (!h) return null;
+    // Frameworks that re-render <body> (React recovering from a hydration
+    // mismatch) drop nodes they don't own; put the sprite back.
+    if (!h.isConnected) (document.body || document.documentElement).appendChild(h);
+    return frag;
   };
 
   Element.prototype.setAttribute = function (name, value) {

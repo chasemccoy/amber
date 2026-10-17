@@ -155,7 +155,7 @@ function runShim(
         return el;
       },
       importNode: (n: unknown) => n,
-      body: { appended: [] as any[], appendChild(n: unknown) { (this as any).appended.push(n); } },
+      body: { appended: [] as any[], appendChild(n: any) { n.isConnected = true; (this as any).appended.push(n); } },
       write(...parts: string[]) {
         written.push(parts.join(""));
       },
@@ -567,6 +567,14 @@ test("shim inlines external SVG sprites referenced by <use> and points them at #
   use2.setAttribute("href", "https://example.com/pond/assets/type.svg#preview");
   assert.equal(use2.attrs["href"], "#preview");
   assert.equal(holders.length, 1);
+
+  // A framework re-render that drops the holder from <body> gets it back.
+  holders[0].isConnected = false;
+  const use3 = new sb.Element();
+  use3._tag = "use";
+  use3.setAttribute("href", "/pond/assets/type.svg#early");
+  assert.equal(holders.length, 2, "re-attached");
+  assert.equal(holders[1], holders[0], "the same holder, not a second copy");
 
   // Local fragments and unrecorded sprites are left to the usual rules.
   const local = new sb.Element();
